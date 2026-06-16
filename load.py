@@ -10,7 +10,8 @@ from dotenv import load_dotenv
 load_dotenv()
 HERE = os.path.dirname(os.path.abspath(__file__))
 CLEAN = os.path.join(HERE, "data", "clean.csv")
-URL = os.environ["SUPABASE_DB_URL"]
+# admin task (DROP/CREATE/COPY) — needs the superuser credential, not bot_app
+URL = os.environ.get("SUPABASE_ADMIN_DB_URL") or os.environ["SUPABASE_DB_URL"]
 
 DDL = """
 create extension if not exists pg_trgm;

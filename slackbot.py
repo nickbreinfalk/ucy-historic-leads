@@ -37,9 +37,9 @@ def on_message(event, say, client, logger):
         else:
             client.files_upload_v2(channel=ch, thread_ts=ts, filename=res["filename"],
                                    content=res["csv"], initial_comment=res["summary"])
-    except Exception as e:
-        logger.error(traceback.format_exc())
-        say(thread_ts=ts, text=f":warning: Error matching that listing: `{e}`")
+    except Exception:
+        logger.error(traceback.format_exc())  # full detail stays server-side
+        say(thread_ts=ts, text=":warning: Couldn't process that listing — check the logs.")
     finally:
         # clear the processing hourglass; the green check is reserved for the
         # user to mark a listing as "mailed".

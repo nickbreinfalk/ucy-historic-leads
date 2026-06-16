@@ -17,7 +17,9 @@ INDEXES = [
 ]
 
 def main():
-    with psycopg.connect(os.environ["SUPABASE_DB_URL"], autocommit=True) as conn:
+    # admin task (CREATE INDEX) — needs the superuser credential, not bot_app
+    url = os.environ.get("SUPABASE_ADMIN_DB_URL") or os.environ["SUPABASE_DB_URL"]
+    with psycopg.connect(url, autocommit=True) as conn:
         conn.execute("create extension if not exists pg_trgm")
         conn.execute("set maintenance_work_mem = '256MB'")
         conn.execute("set statement_timeout = '30min'")  # trigram GIN build is slow

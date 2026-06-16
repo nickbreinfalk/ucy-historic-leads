@@ -22,7 +22,8 @@ CHANNEL = os.environ["SLACK_CHANNEL_ID"]
 DB = os.environ["SUPABASE_DB_URL"]
 
 def get_last_ts(conn):
-    conn.execute("create table if not exists bot_state (channel text primary key, last_ts text)")
+    # bot_state is created once via migrations/001_security.sql — no DDL here
+    # (bot_app is least-privilege and intentionally cannot CREATE).
     row = conn.execute("select last_ts from bot_state where channel=%s", (CHANNEL,)).fetchone()
     return row[0] if row else "0"
 
@@ -51,10 +52,10 @@ def handle(msg):
             client.files_upload_v2(channel=CHANNEL, thread_ts=ts,
                                    filename=res["filename"], content=res["csv"],
                                    initial_comment=res["summary"])
-    except Exception as e:
-        traceback.print_exc()
+    except Exception:
+        traceback.print_exc()  # full detail stays in the (private) Actions log
         client.chat_postMessage(channel=CHANNEL, thread_ts=ts,
-                                text=f":warning: Error matching that listing: `{e}`")
+                                text=":warning: Couldn't process that listing — check the run logs.")
     finally:
         try:
             client.reactions_remove(channel=CHANNEL, timestamp=ts, name="hourglass_flowing_sand")

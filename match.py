@@ -19,7 +19,7 @@ relevance = tier*1000 + ts_rank*10 + ln(1+past_requests)
 Default CSV gates to tier >= 2 (drops the flat keyword-only tail where real
 weak buyers and pure junk are indistinguishable). Pass min_tier=1 for --full.
 """
-import os, csv, argparse, psycopg
+import os, re, csv, argparse, psycopg
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -88,7 +88,9 @@ order by t.tier desc
 """
 
 def _params(brand, terms, category, min_tier=2):
-    return {"brand": brand or "", "terms": terms or "",
+    # escape LIKE wildcards so a crafted page title can't broaden the prefix match
+    brand = re.sub(r"([%_\\])", r"\\\1", brand or "")
+    return {"brand": brand, "terms": terms or "",
             "category": category or "", "min_tier": min_tier}
 
 def match(brand="", terms="", category="", limit=None, min_tier=2):
