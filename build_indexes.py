@@ -13,14 +13,15 @@ INDEXES = [
     ("leads_category_idx",  "create index if not exists leads_category_idx on leads (category)"),
     ("leads_email_idx",     "create index if not exists leads_email_idx on leads (email)"),
     ("leads_title_fts_idx", "create index if not exists leads_title_fts_idx on leads using gin (to_tsvector('simple', listing_title))"),
-    ("leads_title_trgm_idx","create index if not exists leads_title_trgm_idx on leads using gin (listing_title gin_trgm_ops)"),
+    # NOTE: the trigram GIN index was dropped — the matcher uses full-text + brand
+    # btree, never ILIKE substring, so it was 203 MB of unused disk IO/RAM pressure.
+    # Don't recreate it unless a fuzzy-substring feature is added.
 ]
 
 def main():
     # admin task (CREATE INDEX) — needs the superuser credential, not bot_app
     url = os.environ.get("SUPABASE_ADMIN_DB_URL") or os.environ["SUPABASE_DB_URL"]
     with psycopg.connect(url, autocommit=True) as conn:
-        conn.execute("create extension if not exists pg_trgm")
         conn.execute("set maintenance_work_mem = '256MB'")
         conn.execute("set statement_timeout = '30min'")  # trigram GIN build is slow
         for name, sql in INDEXES:
