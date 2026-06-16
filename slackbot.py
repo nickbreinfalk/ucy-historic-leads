@@ -11,12 +11,13 @@ from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 
 from listing import parse_listing
-from match import match, count_by_tier, tier_summary
+from match import match
 
 load_dotenv()
 
 LISTING_RE = re.compile(r"https?://(?:www\.)?ucymachines\.com/listings/\S+")
-MAX_ROWS = 10000  # CSV cap; tiering ensures strong matches are never sliced first
+# No row cap: the CSV contains every genuine (tier>=2) match, best-first.
+# The tier filter — not a row count — is the quality gate.
 
 app = App(token=os.environ["SLACK_BOT_TOKEN"])
 
@@ -53,11 +54,13 @@ def on_message(event, say, client, logger):
 
     try:
         info = parse_listing(url)
-        # honest pool size, broken down by tier (whole pool, no cap)
-        counts = count_by_tier(info["brand"], info["terms"], info["category"])
-        total, strong, cat, kw = tier_summary(counts)
-        # the CSV: strong + category tiers (>=2), capped; keyword-only excluded by default
-        rows = match(info["brand"], info["terms"], info["category"], MAX_ROWS, min_tier=2)
+        # one uncapped query for the whole pool; derive the tier breakdown in Python
+        all_rows = match(info["brand"], info["terms"], info["category"], min_tier=1)
+        strong = sum(1 for r in all_rows if r["tier"] >= 4)   # brand / brand+category
+        cat    = sum(1 for r in all_rows if r["tier"] in (2, 3))  # this machine type
+        kw     = sum(1 for r in all_rows if r["tier"] == 1)   # weak keyword-only
+        total  = strong + cat + kw
+        rows   = [r for r in all_rows if r["tier"] >= 2]      # the CSV: genuine buyers
         if not rows:
             say(thread_ts=ts,
                 text=(f":mag: No solid matches for *{info['title']}* "
@@ -76,9 +79,7 @@ def on_message(event, say, client, logger):
                     f"— {strong:,} brand · {cat:,} category"
                     + (f" · {kw:,} keyword-only (excluded)" if kw else ""))
         in_csv = len(rows)
-        csv_note = f"CSV: top {in_csv:,} (tier ≥ 2, ranked by relevance)."
-        if in_csv < strong + cat:
-            csv_note += f" {strong + cat - in_csv:,} more matched than the {MAX_ROWS:,} cap — ask to widen."
+        csv_note = f"CSV: all {in_csv:,} genuine buyers (tier ≥ 2), ranked best-first."
         summary = (
             f"{headline}\n"
             f"> brand: `{info['brand'] or '—'}`   category: `{info['category'] or '—'}`\n"

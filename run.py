@@ -8,7 +8,7 @@ import sys
 from listing import parse_listing
 from match import match, count_by_tier, tier_summary, export_csv
 
-def run(url, limit=10000, out=None, full=False):
+def run(url, limit=None, out=None, full=False):
     info = parse_listing(url)
     print(f"machine : {info['title']}")
     print(f"brand   : {info['brand']}")
@@ -29,6 +29,6 @@ def run(url, limit=10000, out=None, full=False):
 
 if __name__ == "__main__":
     url = sys.argv[1]
-    limit = int(sys.argv[2]) if len(sys.argv) > 2 else 1000
+    limit = int(sys.argv[2]) if len(sys.argv) > 2 else None  # default: no cap
     safe = url.rstrip("/").split("/")[-1][:40] or "leads"
     run(url, limit, out=f"data/{safe}.csv")

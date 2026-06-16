@@ -75,7 +75,6 @@ from tiered
 group by email
 having max(tier) >= %(min_tier)s
 order by relevance desc, last_request desc nulls last
-limit %(limit)s
 """
 
 # Honest pool size, broken down by tier (distinct contacts), no LIMIT.
@@ -88,14 +87,17 @@ group by t.tier
 order by t.tier desc
 """
 
-def _params(brand, terms, category, min_tier=2, limit=10000):
+def _params(brand, terms, category, min_tier=2):
     return {"brand": brand or "", "terms": terms or "",
-            "category": category or "", "min_tier": min_tier, "limit": limit}
+            "category": category or "", "min_tier": min_tier}
 
-def match(brand="", terms="", category="", limit=10000, min_tier=2):
-    p = _params(brand, terms, category, min_tier, limit)
+def match(brand="", terms="", category="", limit=None, min_tier=2):
+    """No cap by default — returns every tier>=min_tier contact, best-first.
+    Pass an int `limit` only if you deliberately want a smaller slice."""
+    p = _params(brand, terms, category, min_tier)
+    sql = MATCH_SQL + (f"\nlimit {int(limit)}" if limit else "")
     with psycopg.connect(os.environ["SUPABASE_DB_URL"], autocommit=True) as conn:
-        cur = conn.execute(MATCH_SQL, p)
+        cur = conn.execute(sql, p)
         cols = [d.name for d in cur.description]
         return [dict(zip(cols, row)) for row in cur.fetchall()]
 
@@ -135,14 +137,14 @@ if __name__ == "__main__":
     ap.add_argument("--brand", default="")
     ap.add_argument("--terms", default="")
     ap.add_argument("--category", default="")
-    ap.add_argument("--limit", type=int, default=10000)
+    ap.add_argument("--limit", type=int, default=0, help="0 = no cap (default)")
     ap.add_argument("--full", action="store_true", help="include tier-1 keyword-only matches")
     ap.add_argument("--out", default="")
     a = ap.parse_args()
     counts = count_by_tier(a.brand, a.terms, a.category)
     total, strong, cat, kw = tier_summary(counts)
     print(f"pool: {total} matched  |  {strong} brand  /  {cat} category  /  {kw} keyword-only")
-    rows = match(a.brand, a.terms, a.category, a.limit, min_tier=(1 if a.full else 2))
+    rows = match(a.brand, a.terms, a.category, a.limit or None, min_tier=(1 if a.full else 2))
     print(f"{len(rows)} in CSV (min_tier={'1' if a.full else '2'})")
     for r in rows[:15]:
         print(f"  T{r['tier']} [{r['relevance']}] {r['past_requests']}x  "
