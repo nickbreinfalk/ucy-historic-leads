@@ -18,8 +18,11 @@ def fetch_title(url):
     """Best machine title we can get from the page; fall back to the URL slug."""
     title = ""
     try:
-        r = requests.get(url, headers=HEADERS, timeout=20)
-        soup = BeautifulSoup(r.text, "html.parser")
+        # SSRF-safe: don't chase redirects to arbitrary hosts. If the listing
+        # page redirects, we just fall back to the URL slug (which carries the
+        # brand/model anyway).
+        r = requests.get(url, headers=HEADERS, timeout=20, allow_redirects=False)
+        soup = BeautifulSoup(r.text if r.status_code == 200 else "", "html.parser")
         og = soup.find("meta", property="og:title")
         if og and og.get("content"):
             title = og["content"].strip()

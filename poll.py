@@ -65,9 +65,16 @@ def handle(msg):
 def main():
     with psycopg.connect(DB, autocommit=True) as conn:
         last = get_last_ts(conn)
-        resp = client.conversations_history(channel=CHANNEL, oldest=last,
-                                            inclusive=False, limit=200)
-        msgs = sorted(resp.get("messages", []), key=lambda m: float(m["ts"]))
+        # paginate so a burst of >200 messages in one window is never dropped
+        msgs, cursor = [], None
+        while True:
+            resp = client.conversations_history(channel=CHANNEL, oldest=last,
+                                                 inclusive=False, limit=200, cursor=cursor)
+            msgs.extend(resp.get("messages", []))
+            cursor = (resp.get("response_metadata") or {}).get("next_cursor")
+            if not cursor:
+                break
+        msgs.sort(key=lambda m: float(m["ts"]))
         newest = last
         for msg in msgs:
             if not (msg.get("subtype") or msg.get("bot_id")):  # skip bot/system msgs
