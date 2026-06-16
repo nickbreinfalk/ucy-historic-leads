@@ -57,19 +57,31 @@ def _load_patterns(conn):
             for r in rows]
 
 def _recognize(text, patterns):
-    """Return the learned pattern whose most-specific synonym appears in the title.
-    This covers both 'same machine seen before' and 'same type seen before'."""
+    """Return (best_pattern, confident). confident=True only when the match is
+    specific (a phrase or a >=4-char token) AND unambiguous (one type matched, or
+    the best match clearly beats the runner-up). When not confident we prefer to
+    spend a Haiku call rather than risk a wrong type — correctness over cost."""
     low = text.lower()
-    best, best_len = None, 0
+    matches = []  # (pattern, best_synonym_len, is_phrase)
     for p in patterns:
+        blen, phrase = 0, False
         for syn in p["synonyms"]:
             s = (syn or "").lower().strip()
             if len(s) < 3:
                 continue
             hit = (s in low) if " " in s else re.search(r"\b" + re.escape(s) + r"\b", low)
-            if hit and len(s) > best_len:
-                best, best_len = p, len(s)
-    return best
+            if hit and len(s) > blen:
+                blen, phrase = len(s), (" " in s)
+        if blen:
+            matches.append((p, blen, phrase))
+    if not matches:
+        return None, False
+    matches.sort(key=lambda m: -m[1])
+    best, blen, phrase = matches[0]
+    distinct_cats = len({m[0]["category"] for m in matches})
+    dominant = distinct_cats == 1 or blen >= matches[1][1] + 2
+    confident = (phrase or blen >= 4) and dominant
+    return best, confident
 
 def _haiku_classify(title):
     """One Haiku call for a genuinely new machine type. None on any failure."""
@@ -125,18 +137,23 @@ def classify(title, slug="", url=""):
     try:
         with _conn() as conn:
             patterns = _load_patterns(conn)
-            hit = _recognize(text, patterns)
-            if hit:  # known type (or same machine seen before) -> FREE
+            hit, confident = _recognize(text, patterns)
+            if hit and confident:  # strong, unambiguous cache match -> FREE
                 return {"brand": brand, "category": hit["category"],
                         "terms": _terms_from_synonyms(brand, hit["synonyms"]),
                         "used_haiku": False, "recognized": f"known type: {hit['category']}"}
-            prof = _haiku_classify(title)  # novel -> learn it
+            # novel OR low-confidence match -> spend a Haiku call for correct data
+            prof = _haiku_classify(title)
             if prof:
                 _store(conn, prof)
                 hb = prof.get("brand") or brand
                 return {"brand": hb, "category": prof["category"],
                         "terms": _terms_from_synonyms(hb, prof["synonyms"]),
                         "used_haiku": True, "recognized": f"learned new type: {prof['category']}"}
+            if hit:  # Haiku unavailable but we had a weak cache match -> use it
+                return {"brand": brand, "category": hit["category"],
+                        "terms": _terms_from_synonyms(brand, hit["synonyms"]),
+                        "used_haiku": False, "recognized": f"cache (low-confidence, AI unavailable): {hit['category']}"}
     except Exception:
         traceback.print_exc()
     # fallback: rule-based extraction (Haiku/DB unavailable)
