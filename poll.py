@@ -21,17 +21,26 @@ client = WebClient(token=os.environ["SLACK_BOT_TOKEN"])
 CHANNEL = os.environ["SLACK_CHANNEL_ID"]
 DB = os.environ["SUPABASE_DB_URL"]
 
+def _slack_ts(ts):
+    """Slack message timestamps are EXACTLY 6 decimal places. An `oldest` with
+    more (e.g. repr(time.time()) -> 7) makes conversations_history silently
+    return 0 messages. Always normalize to 6 decimals."""
+    try:
+        return "%.6f" % float(ts)
+    except (TypeError, ValueError):
+        return "0"
+
 def get_last_ts(conn):
     # bot_state is created once via migrations/001_security.sql — no DDL here
     # (bot_app is least-privilege and intentionally cannot CREATE).
     row = conn.execute("select last_ts from bot_state where channel=%s", (CHANNEL,)).fetchone()
-    return row[0] if row else "0"
+    return _slack_ts(row[0]) if row else "0"
 
 def set_last_ts(conn, ts):
     conn.execute(
         "insert into bot_state(channel,last_ts) values(%s,%s) "
         "on conflict(channel) do update set last_ts=excluded.last_ts",
-        (CHANNEL, ts))
+        (CHANNEL, _slack_ts(ts)))
 
 def handle(msg):
     text = msg.get("text", "") or ""
