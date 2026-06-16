@@ -41,7 +41,7 @@ def build_reply(url):
 
     if not rows:
         return {"info": info, "profile": profile, "rows": [], "csv": None, "filename": None,
-                "summary": (f":mag: No matching buyers for *{info['title']}*.\n{_tag(profile)}")}
+                "summary": (f":mag: No matching leads for *{info['title']}*.\n{_tag(profile)}")}
 
     brand = sum(1 for r in rows if r["tier"] >= 4)
     typ   = sum(1 for r in rows if r["tier"] == 3)
@@ -52,12 +52,13 @@ def build_reply(url):
     top = ", ".join(f"{c} ({n})" for c, n in sorted(countries.items(), key=lambda x: -x[1])[:5])
 
     summary = (
-        f":dart: *{len(rows):,} potential buyers* for *{info['title']}*  "
-        f"— {brand:,} bought this brand · {typ:,} bought this type\n"
+        f":dart: *{len(rows):,} matching leads* for *{info['title']}*  "
+        f"— {brand:,} inquired about this brand · {typ:,} inquired about this type\n"
         f"> brand: `{profile['brand'] or '—'}`   type: `{profile['category'] or '—'}`\n"
         f"> top countries: {top}\n"
-        f"CSV: all {len(rows):,} buyers, ranked best-first "
-        f"(tier 5 = this brand+type, 4 = this brand, 3 = this type).\n"
+        f"CSV: all {len(rows):,} leads, ranked best-first "
+        f"(tier 5 = inquired about this brand+type · 4 = this brand · 3 = this type).\n"
+        f"> _historic leads who requested quotes on similar machines — not past buyers_\n"
         f"{_tag(profile)}"
     )
     filename = (re.sub(r"[^a-zA-Z0-9]+", "_", info["title"])[:50] or "leads") + "_leads.csv"

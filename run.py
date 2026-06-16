@@ -20,7 +20,7 @@ def run(url, out=None):
     rows = match(prof["brand"], prof["terms"], prof["category"])
     brand = sum(1 for r in rows if r["tier"] >= 4)
     typ = sum(1 for r in rows if r["tier"] == 3)
-    print(f"{len(rows)} buyers  |  {brand} brand  /  {typ} type\n")
+    print(f"{len(rows)} leads  |  {brand} inquired-brand  /  {typ} inquired-type\n")
     for r in rows[:12]:
         print(f"  T{r['tier']} [{r['relevance']}] {r['past_requests']}x  "
               f"{(r['company'] or '')[:26]:26}  {r['email']:34}  {r['country']}")

@@ -15,7 +15,7 @@ USER = os.environ["SLACK_USER_ID"]
 MESSAGE = (
     f":calendar: <@{USER}> — *Friday lead drop!* :inbox_tray:\n"
     f"Time to export this week's leads from the *Machinio system* and upload them, "
-    f"so the historic-leads database stays current and the matcher keeps finding fresh buyers."
+    f"so the historic-leads database stays current and the matcher keeps surfacing fresh leads."
 )
 
 if __name__ == "__main__":
