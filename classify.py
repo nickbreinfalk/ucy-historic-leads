@@ -65,6 +65,22 @@ def _load_patterns(conn):
     return [{"category": r[0], "brand_hint": r[1], "synonyms": r[2] or [], "noise_terms": r[3] or []}
             for r in rows]
 
+def _overlap_synonyms(text, patterns):
+    """Union of synonyms from EVERY learned pattern that shares a term with `text`.
+    Lets a search use all accumulated knowledge for a type even if it's split across
+    rows (e.g. a seed 'CMM / measuring' + a Haiku 'coordinate measuring machine')."""
+    low = text.lower()
+    out = []
+    for p in patterns:
+        for s in p["synonyms"]:
+            s2 = (s or "").lower().strip()
+            if len(s2) < 3:
+                continue
+            hit = (s2 in low) if " " in s2 else re.search(r"\b" + re.escape(s2) + r"\b", low)
+            if hit:
+                out.extend(p["synonyms"]); break
+    return out
+
 def _recognize(text, patterns):
     """Return (best_pattern, confident). confident=True only when the match is
     specific (a phrase or a >=4-char token) AND unambiguous (one type matched, or
@@ -112,14 +128,46 @@ def _haiku_classify(title):
         traceback.print_exc()
         return None
 
-def _store(conn, prof):
+def _merge(*lists, cap=25):
+    """Union of synonym lists, order-preserving + de-duped, capped to keep the
+    full-text query sane. This is how knowledge accumulates per machine type."""
+    seen, out = set(), []
+    for lst in lists:
+        for s in (lst or []):
+            s = (s or "").strip()
+            if s and s.lower() not in seen:
+                seen.add(s.lower()); out.append(s)
+    return out[:cap]
+
+def _store(conn, category, brand, synonyms, noise):
     conn.execute(
         """insert into learned_patterns(category, brand_hint, synonyms, noise_terms, source, hits)
            values (%s, %s, %s, %s, 'haiku', 1)
            on conflict (category) do update
-             set synonyms = excluded.synonyms, hits = learned_patterns.hits + 1""",
-        (prof["category"], prof.get("brand", ""), prof["synonyms"], prof.get("noise_terms", [])),
+             set synonyms = excluded.synonyms,
+                 brand_hint = coalesce(nullif(excluded.brand_hint, ''), learned_patterns.brand_hint),
+                 hits = learned_patterns.hits + 1""",
+        (category, brand or "", synonyms, noise or []),
     )
+
+# short tokens that ARE valid machine terms (so we don't strip them as model codes)
+INDUSTRIAL_OK = {"cmm", "edm", "vmc", "hmc", "cnc", "smt", "ems", "saw", "mig", "tig", "co2", "plc"}
+
+def _clean_synonyms(synonyms, noise=()):
+    """Strip anything that would pollute the search: generic nouns, the listing's
+    own noise terms (model #/year/dimensions per Haiku), and bare short model codes
+    like 'zip' (a 3-char single token that isn't a known industrial acronym)."""
+    noiseset = {(n or "").lower().strip() for n in (noise or [])}
+    out = []
+    for s in synonyms:
+        s = (s or "").strip()
+        low = s.lower()
+        if not s or low in GENERIC_NOUNS or low in noiseset:
+            continue
+        if " " not in s and len(low) <= 3 and low not in INDUSTRIAL_OK:
+            continue
+        out.append(s)
+    return out
 
 def _terms_from_synonyms(brand, synonyms):
     """OR full-text query from discriminating synonyms + bare brand token."""
@@ -145,21 +193,34 @@ def classify(title, slug="", url=""):
     text = f"{title} {slug}"
     try:
         with _conn() as conn:
+            patterns = _load_patterns(conn)
             # Quality-first: always ask Haiku for the best brand + terms for THIS exact
-            # machine (it's ~$0.003 a call). The cache is kept fresh and used only as an
-            # offline fallback when Haiku is unavailable.
+            # machine (~$0.003 a call). Then COMPOUND it into what we already know about
+            # this machine type, and search with the accumulated union — the system gets
+            # smarter with every machine posted.
             prof = _haiku_classify(title)
             if prof:
-                _store(conn, prof)  # refresh the learned cache (also the offline fallback)
+                syn_text = " ".join(prof["synonyms"])
+                # cluster onto an existing learned type by synonym overlap (so phrasing
+                # drift in the category label doesn't fragment the knowledge)
+                existing, _ = _recognize(syn_text, patterns)
+                category = existing["category"] if existing else prof["category"]
+                noise = prof.get("noise_terms", [])
+                # accumulate Haiku's terms into the canonical row (the cache learns),
+                # sanitized so model fragments never get stored
+                stored = _clean_synonyms(_merge(existing["synonyms"] if existing else [], prof["synonyms"]), noise)
                 hb = prof.get("brand") or brand
-                return {"brand": hb, "category": prof["category"],
-                        "terms": _terms_from_synonyms(hb, prof["synonyms"]),
-                        "used_haiku": True, "recognized": f"AI-classified: {prof['category']}"}
-            # Haiku unavailable -> recognize from the cache
-            hit, _ = _recognize(text, _load_patterns(conn))
+                _store(conn, category, hb, stored, noise)
+                # search with EVERYTHING known about this type (all overlapping rows) + fresh Haiku
+                query_syn = _clean_synonyms(_merge(_overlap_synonyms(syn_text, patterns), prof["synonyms"]), noise)
+                return {"brand": hb, "category": category,
+                        "terms": _terms_from_synonyms(hb, query_syn),
+                        "used_haiku": True, "recognized": f"AI-classified: {category}"}
+            # Haiku unavailable -> use the accumulated knowledge from the cache
+            hit, _ = _recognize(text, patterns)
             if hit:
                 return {"brand": brand, "category": hit["category"],
-                        "terms": _terms_from_synonyms(brand, hit["synonyms"]),
+                        "terms": _terms_from_synonyms(brand, _clean_synonyms(hit["synonyms"])),
                         "used_haiku": False, "recognized": f"cache (AI unavailable): {hit['category']}"}
     except Exception:
         traceback.print_exc()
