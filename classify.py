@@ -36,14 +36,23 @@ HAIKU_SCHEMA = {
     "additionalProperties": False,
 }
 HAIKU_SYSTEM = (
-    "You classify used industrial-machine listings so a dealer can find prior buyers of the same TYPE.\n"
-    "Return: the manufacturer brand; a canonical lowercase machine category; a list of DISCRIMINATING "
-    "synonyms that would appear in other listings of this same machine type (the category name, common "
-    "abbreviations, and strong type-specific terms); and noise_terms (tokens in THIS title that are model "
-    "numbers, years, dimensions, or brand fragments).\n"
-    "Synonyms must be specific to the machine TYPE — include things like 'coordinate measuring', 'cmm', "
-    "'thread roller'. NEVER include generic words ('machine', 'used', 'automatic', 'cnc', 'line') or the "
-    "model number/year. 4-8 synonyms is ideal."
+    "You classify a used industrial-machine listing so a dealer can find, in a database of past "
+    "machine-enquiry titles, every contact who inquired about the SAME TYPE of machine. Accuracy and "
+    "recall of the synonym set directly determine how good the buyer list is — be thorough.\n\n"
+    "Return:\n"
+    "- brand: the manufacturer ONLY (e.g. 'OGP', 'Trumpf', 'DMG'); '' if unclear. Use the canonical "
+    "manufacturer name, not a sub-brand or model line.\n"
+    "- category: a canonical lowercase machine TYPE (e.g. 'coordinate measuring machine', 'press brake', "
+    "'fiber laser cutter').\n"
+    "- synonyms: 5-10 DISCRIMINATING terms a buyer of THIS machine type would have in their own enquiry "
+    "titles. Include the category name, its common abbreviations/acronyms (e.g. 'cmm'), alternate "
+    "spellings, the manufacturer name and well-known aliases (e.g. 'optical gaging products' for OGP), and "
+    "strong type-specific terms (sensing method, sub-type). Think about what genuinely-interested buyers "
+    "actually typed. Each synonym must be specific enough that a match almost certainly means the same "
+    "machine type — err toward precision, but cover the real variants.\n"
+    "- noise_terms: tokens in THIS title that are model numbers, years, dimensions, or fragments to ignore.\n\n"
+    "NEVER put generic words in synonyms ('machine', 'used', 'automatic', 'cnc', 'line', 'system', 'new') "
+    "or the model number/year/dimensions — those pull in unrelated machines."
 )
 
 def _conn():
@@ -136,24 +145,22 @@ def classify(title, slug="", url=""):
     text = f"{title} {slug}"
     try:
         with _conn() as conn:
-            patterns = _load_patterns(conn)
-            hit, confident = _recognize(text, patterns)
-            if hit and confident:  # strong, unambiguous cache match -> FREE
-                return {"brand": brand, "category": hit["category"],
-                        "terms": _terms_from_synonyms(brand, hit["synonyms"]),
-                        "used_haiku": False, "recognized": f"known type: {hit['category']}"}
-            # novel OR low-confidence match -> spend a Haiku call for correct data
+            # Quality-first: always ask Haiku for the best brand + terms for THIS exact
+            # machine (it's ~$0.003 a call). The cache is kept fresh and used only as an
+            # offline fallback when Haiku is unavailable.
             prof = _haiku_classify(title)
             if prof:
-                _store(conn, prof)
+                _store(conn, prof)  # refresh the learned cache (also the offline fallback)
                 hb = prof.get("brand") or brand
                 return {"brand": hb, "category": prof["category"],
                         "terms": _terms_from_synonyms(hb, prof["synonyms"]),
-                        "used_haiku": True, "recognized": f"learned new type: {prof['category']}"}
-            if hit:  # Haiku unavailable but we had a weak cache match -> use it
+                        "used_haiku": True, "recognized": f"AI-classified: {prof['category']}"}
+            # Haiku unavailable -> recognize from the cache
+            hit, _ = _recognize(text, _load_patterns(conn))
+            if hit:
                 return {"brand": brand, "category": hit["category"],
                         "terms": _terms_from_synonyms(brand, hit["synonyms"]),
-                        "used_haiku": False, "recognized": f"cache (low-confidence, AI unavailable): {hit['category']}"}
+                        "used_haiku": False, "recognized": f"cache (AI unavailable): {hit['category']}"}
     except Exception:
         traceback.print_exc()
     # fallback: rule-based extraction (Haiku/DB unavailable)

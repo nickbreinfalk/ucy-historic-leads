@@ -26,12 +26,13 @@ def _csv_bytes(rows):
     return buf.getvalue().encode("utf-8")
 
 def _tag(profile):
-    """Visible indicator of whether Haiku fired."""
+    """Visible indicator of how the machine was classified."""
+    cat = profile.get("category") or "—"
     if profile["used_haiku"]:
-        return f":brain: _{profile['recognized']}_ (classified by AI — now cached, free next time)"
+        return f":brain: _AI-optimized match · type: {cat}_"
     if profile["recognized"].startswith("rules"):
-        return ":warning: _classified by rules (AI unavailable)_"
-    return f":white_check_mark: _{profile['recognized']} — recognized from cache, no AI used_"
+        return f":warning: _matched by rules (AI temporarily unavailable) · type: {cat}_"
+    return f":information_source: _matched from cache (AI temporarily unavailable) · type: {cat}_"
 
 def build_reply(url):
     """Returns {info, rows, summary, csv, filename}. csv/filename None if no matches."""
