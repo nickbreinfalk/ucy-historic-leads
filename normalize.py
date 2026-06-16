@@ -63,6 +63,7 @@ CATEGORY_RULES = [
     ("injection molding",    ["injection mold", "injection mould", "spritzgie", "arburg", "engel", "krauss maffei"]),
     ("extrusion / plastics", ["extruder", "extrusion", "blown film", "blow molding", "blow moulding", "thermoform", "pelletiz", "calender", "plastic granulat"]),
     ("press / stamping",     ["stamping", "eccentric press", "hydraulic press", "exzenter", "stanz"]),
+    ("thread rolling",       ["thread roll", "thread-roll", "rouleuse", "thread former", "cold former thread"]),
     ("welding",              ["welding", "schweiss", "schweiß", "welder"]),
     ("bending / rolling",    ["plate roll", "bending roll", "section bend", "rundbieg", "profilbieg"]),
     ("sawing",               ["band saw", "bandsaw", "cold saw", "saege", "säge"]),
