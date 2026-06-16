@@ -1,0 +1,27 @@
+name: poll-historic-leads
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"   # every 5 minutes (GitHub cron can run a few min late)
+  workflow_dispatch: {}      # allow manual "Run workflow" from the Actions tab
+
+concurrency:
+  group: poll-historic-leads
+  cancel-in-progress: false  # let an in-flight run finish; never overlap
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python poll.py
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}

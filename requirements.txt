@@ -1,0 +1,5 @@
+slack_sdk
+psycopg[binary]
+python-dotenv
+requests
+beautifulsoup4
