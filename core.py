@@ -58,7 +58,6 @@ def build_reply(url):
         f"> top countries: {top}\n"
         f"CSV: all {len(rows):,} leads, ranked best-first "
         f"(tier 5 = inquired about this brand+type · 4 = this brand · 3 = this type).\n"
-        f"> _historic leads who requested quotes on similar machines — not past buyers_\n"
         f"{_tag(profile)}"
     )
     filename = (re.sub(r"[^a-zA-Z0-9]+", "_", info["title"])[:50] or "leads") + "_leads.csv"
