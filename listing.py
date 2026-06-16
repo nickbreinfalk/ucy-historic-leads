@@ -34,20 +34,44 @@ def fetch_title(url):
     slug = m.group(1).replace("-", " ") if m else ""
     return title, slug
 
+# Generic machine nouns carry no discrimination (every CMM title says "machine";
+# every press-brake title says "press") -> they pull in the whole adjacent vertical.
+GENERIC_NOUNS = {
+    "machine", "machines", "press", "boring", "milling", "cutting", "drilling",
+    "grinding", "welding", "lathe", "router", "saw", "line", "center", "centre",
+    "vertical", "horizontal", "machining", "automatic", "series", "used", "new",
+    "for", "sale", "in", "the", "and", "with", "mm", "ton", "system", "unit",
+}
+# Short tokens that ARE discriminating industrial terms -> keep even before a number.
+INDUSTRIAL_ALLOW = {"ogp", "cmm", "edm", "vmc", "hmc", "cnc", "smt", "ems"}
+
 def build_terms(title, slug, brand, category):
-    """OR-query of: detected-category keywords + brand + distinctive model/slug words."""
+    """OR-query of: detected-category keywords + bare brand + distinctive slug words.
+    Filters generic nouns and bare model designators (e.g. 'zip' in 'ZIP 400')
+    that otherwise match unrelated machines (band saws, zip-lock lines)."""
     parts = []
     if category and category in CAT_KEYWORDS:
         for kw in CAT_KEYWORDS[category]:
             parts.append(f'"{kw}"' if " " in kw else kw)
     if brand:
-        parts.append(f'"{brand}"' if " " in brand else brand)
-    # add meaningful slug words (skip years, pure numbers, filler, units)
-    stop = {"used", "new", "for", "sale", "in", "the", "and", "with", "mm", "ton"}
-    for w in re.split(r"\s+", slug):
-        w = w.strip().lower()
-        if len(w) >= 3 and not w.isdigit() and w not in stop and not re.fullmatch(r"(19|20)\d{2}", w):
-            parts.append(w)
+        # bare manufacturer only: a quoted "Heidelberg SM" becomes 'heidelberg & sm'
+        # in websearch_to_tsquery and EXCLUDES Heidelberg GTO/CD rows entirely.
+        parts.append(brand.split()[0])
+    # add meaningful slug words
+    toks = [w.strip() for w in re.split(r"\s+", slug) if w.strip()]
+    for i, w in enumerate(toks):
+        wl = w.lower()
+        if len(wl) < 3 or wl.isdigit() or wl in GENERIC_NOUNS:
+            continue
+        if re.fullmatch(r"(19|20)\d{2}", wl):
+            continue
+        # model-designator guard: a 3-4 char alpha token immediately before a pure
+        # number is a model code ('zip 400', 'max 300'), not a machine type -> skip,
+        # unless it's a known industrial term.
+        if (3 <= len(wl) <= 4 and wl.isalpha() and wl not in INDUSTRIAL_ALLOW
+                and i + 1 < len(toks) and toks[i + 1].isdigit()):
+            continue
+        parts.append(wl)
     # de-dupe preserving order
     seen, out = set(), []
     for p in parts:

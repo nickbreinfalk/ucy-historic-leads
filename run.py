@@ -6,18 +6,22 @@ leads who could buy it. This is the logic the Slack bot will call.
 """
 import sys
 from listing import parse_listing
-from match import match, export_csv
+from match import match, count_by_tier, tier_summary, export_csv
 
-def run(url, limit=1000, out=None):
+def run(url, limit=10000, out=None, full=False):
     info = parse_listing(url)
     print(f"machine : {info['title']}")
     print(f"brand   : {info['brand']}")
     print(f"category: {info['category']}")
     print(f"terms   : {info['terms']}\n")
-    rows = match(info["brand"], info["terms"], info["category"], limit)
-    print(f"{len(rows)} unique contacts matched\n")
+    counts = count_by_tier(info["brand"], info["terms"], info["category"])
+    total, strong, cat, kw = tier_summary(counts)
+    print(f"pool: {total} matched  |  {strong} brand  /  {cat} category  /  {kw} keyword-only")
+    rows = match(info["brand"], info["terms"], info["category"], limit,
+                 min_tier=(1 if full else 2))
+    print(f"{len(rows)} in CSV (min_tier={'1' if full else '2'})\n")
     for r in rows[:12]:
-        print(f"  [{r['relevance']}] {r['past_requests']}x  "
+        print(f"  T{r['tier']} [{r['relevance']}] {r['past_requests']}x  "
               f"{(r['company'] or '')[:26]:26}  {r['email']:34}  {r['country']}")
     if out:
         export_csv(rows, out)
