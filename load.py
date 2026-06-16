@@ -62,12 +62,7 @@ def main():
                     cp.write(chunk)
         n = conn.execute("select count(*) from leads").fetchone()[0]
         print(f"  loaded {n:,} rows in {time.time()-t0:.0f}s")
-
-        print("building generated columns + indexes (slow)...")
-        conn.execute(POST)
-        size = conn.execute(
-            "select pg_size_pretty(pg_total_relation_size('leads'))").fetchone()[0]
-        print(f"DONE in {time.time()-t0:.0f}s total. Table size (with indexes): {size}")
+        print("Now run build_indexes.py to (re)build the expression indexes.")
 
 if __name__ == "__main__":
     main()
