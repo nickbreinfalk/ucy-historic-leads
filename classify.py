@@ -189,14 +189,20 @@ def _clean_synonyms(synonyms, noise=()):
     return out
 
 def _terms_from_synonyms(brand, synonyms):
-    """OR full-text query from discriminating synonyms + bare brand token."""
+    """OR full-text query from discriminating synonyms + the brand as a PHRASE."""
     parts = []
     for s in synonyms:
         s = s.strip()
         if s and s.lower() not in GENERIC_NOUNS:
             parts.append(f'"{s}"' if " " in s else s)
     if brand:
-        parts.append(brand.split()[0])
+        # Use the FULL brand as a phrase, NEVER the bare first word. A generic
+        # first word ("Turbo" of "Turbo Clean", "Smart" of "Smart NGP") matches
+        # unrelated machines ("Mazak Super Turbo" laser cutter) and floods the
+        # type list. A multi-word phrase is discriminating; real brand matching
+        # is already the dedicated `brand` column's job (exact + prefix).
+        b = brand.strip()
+        parts.append(f'"{b}"' if " " in b else b)
     seen, out = set(), []
     for p in parts:
         if p.lower() not in seen:
