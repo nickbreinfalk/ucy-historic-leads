@@ -39,7 +39,11 @@ TYPE_MODIFIER = {"vertical", "horizontal", "cnc", "automatic", "automated", "uni
                  "manual", "semi", "mobile", "portable", "industrial", "heavy",
                  "compact", "double", "single", "twin", "mini", "micro", "large",
                  "small", "type", "series", "fully", "axis", "high", "speed",
-                 "precision", "standard", "electric", "hydraulic"}
+                 "precision", "standard", "electric", "hydraulic",
+                 # 'center'/'centre' is a suffix on machine-tool types, not the type
+                 # itself — dropping it unifies 'machining center' with 'milling
+                 # machine', and 'turning center' with 'lathe'.
+                 "center", "centre"}
 # curated SYMMETRIC synonyms so word-variants of the SAME machine still match
 TYPE_SYN = {
     "cleaning": ["washer", "washing", "cleaner", "wash"],
@@ -48,8 +52,9 @@ TYPE_SYN = {
     "cleaner": ["cleaning", "washer", "washing", "wash"],
     "wash": ["cleaning", "washer", "washing", "cleaner"],
     "lathe": ["turning"], "turning": ["lathe"],
-    # NB: deliberately NO milling<->mill — "mill" is a homonym (ball/rolling/grain/
-    # saw mill are NOT milling machines); it would flood a milling-machine search.
+    # a machining center IS a CNC milling machine — same buyer market. (Still NO
+    # milling<->mill: "mill" is a homonym — ball/rolling/grain/saw mill aren't mills.)
+    "milling": ["machining"], "machining": ["milling"],
     "grinding": ["grinder"], "grinder": ["grinding"],
     "printing": ["printer"], "printer": ["printing"],
     "molding": ["moulding"], "moulding": ["molding"],
