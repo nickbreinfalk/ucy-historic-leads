@@ -10,7 +10,8 @@ or ✓ (recognized from cache) tag so usage is always visible.
 import io, csv, re
 from listing import parse_listing, strip_location
 from classify import classify_stable
-from match import match, type_grounded
+from match import match, type_grounded, type_is_thin
+from registry import brand_domain, is_collision_brand
 
 _COUNTRY_ABBR = {"United States": "USA", "United States of America": "USA",
                  "United Arab Emirates": "UAE", "United Kingdom": "UK"}
@@ -61,43 +62,70 @@ def _is_junk_brand(b):
     # "Industrial Metalworking ...") — these are descriptions/inventories, not brands.
     return bool({w for w in re.findall(r"[a-z]+", b)} & _JUNK_BRAND)
 
-def build_reply(url):
-    """Returns {info, rows, summary, csv, filename}. csv/filename None if no matches.
+def _route(profile, raw_title):
+    """Decide HOW to find the audience for a posted machine. Returns one of:
+       'type'    — the type is reliable (stated in the title, or the AI confidently
+                   recognises a specific discriminating type) -> everyone who wanted
+                   THIS kind of machine (this brand+type, plus this type any brand).
+       'brand'   — type is a guess but the brand is real -> everyone who inquired
+                   about that brand (safe, on-brand, broad — never a wrong-type guess).
+       'abstain' — neither a reliable type nor a safe brand -> don't blast garbage.
 
-    Routing: if the machine TYPE is stated in the title -> match by type (this
-    brand+type + this type, any brand). If only a brand is identifiable (cryptic
-    title) -> match by BRAND (everyone who inquired about that brand). Either way
-    the CSV is one clean, blast-ready list — never a wrong-type guess."""
+    Precision guards (registry-backed, deterministic):
+      • a homonym brand ('Prima', 'Mechatronic') is never brand-blasted — wrong mix.
+      • the AI's 'high' confidence is ignored when the type is THIN (only broad words
+        like 'printer'/'filling'/'grinding') or when the brand's known industry
+        contradicts the AI's domain (food brand + a metalworking type)."""
+    mtype = profile.get("category") or ""
+    brand = profile.get("brand") or ""
+    hdomain = profile.get("domain") or ""
+    grounded = type_grounded(mtype, raw_title)
+    rdomain = brand_domain(brand)
+    domain_conflict = bool(rdomain and hdomain and rdomain != hdomain)
+    collision = is_collision_brand(brand)
+    confident = (profile.get("confidence") == "high"
+                 and not type_is_thin(mtype) and not domain_conflict)
+
+    if grounded:                              # discriminating type literally in the title
+        return "type"
+    if confident:                             # AI genuinely recognises this exact type
+        return "type"
+    if collision:                             # homonym brand, type unproven -> too risky
+        return "abstain"
+    if brand and not _is_junk_brand(brand):   # real brand -> all its inquirers
+        return "brand"
+    return "abstain"
+
+def build_reply(url):
+    """Returns {info, profile, mode, rows, summary, csv, filename}. csv/filename None
+    if there's nothing safe to send. Every CSV is one clean, blast-ready list — the
+    whole audience that wanted a machine like this, never a wrong-type guess."""
     info = parse_listing(url)
     profile = classify_stable(info["title"], url=url)
     mtype = profile["category"] or ""
     brand = profile["brand"] or ""
     title = _clean_title(info["title"])
 
-    # Match by TYPE when the type is stated in the title OR the AI confidently
-    # recognises the exact model (validated calibrated). Otherwise — only a brand,
-    # type is a guess — match by BRAND (all that brand's inquirers), never a guess.
-    confident = profile.get("confidence") == "high"
+    mode = _route(profile, info["title"])
     grounded = type_grounded(mtype, info["title"])
-    by_brand = bool(brand) and not grounded and not confident
-    # junk listing: type isn't confidently known AND there's no real brand to fall
-    # back to (parts package, equipment inventory, seller name) -> don't blast garbage.
-    if not grounded and not confident and _is_junk_brand(brand):
-        return {"info": info, "profile": profile, "rows": [], "csv": None, "filename": None,
-                "summary": f":warning: Couldn't confidently identify *{_clean_title(info['title'])}* "
-                           f"— not a clear machine type or brand. Needs a human look."}
+    if mode == "abstain":
+        return {"info": info, "profile": profile, "mode": mode, "rows": [], "csv": None, "filename": None,
+                "summary": f":warning: Couldn't confidently identify *{title}* "
+                           f"— not a clear machine type, and the brand is ambiguous/missing. Needs a human look."}
+    by_brand = mode == "brand"
     rows = match(brand, brand_only=True) if by_brand else match(brand, mtype=mtype)
-    # recall floor: a near-empty TYPE result (when the type wasn't in the title)
-    # usually means the type was too specific or slightly off — fall back to the
-    # fuller, on-brand brand-mode list if we have a real brand.
-    if not by_brand and not grounded and brand and not _is_junk_brand(brand) and len(rows) < 25:
+    # recall floor: a near-empty result for an AI-GUESSED type (not in the title) is
+    # usually a slightly-off wording — fall back to the fuller on-brand list. A type
+    # stated in the title is trusted even if small (genuinely few wanted it).
+    if mode == "type" and not grounded and brand and not _is_junk_brand(brand) \
+            and not is_collision_brand(brand) and len(rows) < 10:
         br = match(brand, brand_only=True)
         if len(br) > len(rows):
-            rows, by_brand = br, True
+            rows, by_brand, mode = br, True, "brand"
 
     if not rows:
         what = f"brand `{brand}`" if by_brand else f"type `{mtype or '—'}`"
-        return {"info": info, "profile": profile, "rows": [], "csv": None, "filename": None,
+        return {"info": info, "profile": profile, "mode": mode, "rows": [], "csv": None, "filename": None,
                 "summary": f":mag: No leads for *{title}*  ({what})"}
 
     countries = {}
@@ -123,5 +151,5 @@ def build_reply(url):
                f"{head}\n"
                f":earth_africa: top: {top}")
     filename = (re.sub(r"[^a-zA-Z0-9]+", "_", title)[:50] or "leads") + "_leads.csv"
-    return {"info": info, "profile": profile, "rows": rows,
+    return {"info": info, "profile": profile, "mode": mode, "rows": rows,
             "summary": summary, "csv": _csv_bytes(rows), "filename": filename}

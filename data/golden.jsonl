@@ -1,0 +1,30 @@
+{"slug":"9092064-used-2021-haas-st-10","note":"Haas ST-10 = CNC lathe (user's confident-AI case — MUST stay type)","ok_modes":["type"],"expect_type":["lathe","turning"]}
+{"slug":"8918814-shantui-le60-e-wheel-loader-e-radlader-fully-electric-20ton","note":"wheel loader (grounded)","ok_modes":["type"],"expect_type":["loader"]}
+{"slug":"9105292-used-2008-smart-ngp-dd-thread-rolling-machine","note":"thread rolling machine (grounded; 'Smart' brand trap)","ok_modes":["type"],"expect_type":["thread","rolling"]}
+{"slug":"9109152-used-2009-pee-wee-upw-24-thread-rolling-machine","note":"thread rolling machine (grounded)","ok_modes":["type"],"expect_type":["thread","rolling"]}
+{"slug":"9085663-used-2008-scherer-feinbau-vdz-80-ds-with-robot-loading","note":"Scherer Feinbau vertical lathe (cryptic)","ok_modes":["type","brand"]}
+{"slug":"9063453-used-blm-adige-lt8-tube-laser-system","note":"tube laser (grounded)","ok_modes":["type"],"expect_type":["laser","tube"]}
+{"slug":"8583239-used-2001-agie-agiecut-challenge-2-wire-edm-machine","note":"wire EDM (grounded)","ok_modes":["type"],"expect_type":["edm"]}
+{"slug":"7236747-used-hammel-vb-850-e-shredder","note":"shredder (grounded)","ok_modes":["type"],"expect_type":["shred"]}
+{"slug":"6675356-used-1992-3-b-systeme-jaw-crusher","note":"jaw crusher (grounded)","ok_modes":["type"],"expect_type":["crush"]}
+{"slug":"7950119-used-2019-altendorf-f45-evodrive","note":"Altendorf F45 = panel saw (woodworking)","ok_modes":["type","brand"]}
+{"slug":"8896854-used-2005-traub-tnx-80-65","note":"Traub TNX = CNC lathe","ok_modes":["type","brand"]}
+{"slug":"9099513-used-2008-dmg-dmc-80fd-duoblock","note":"DMG DMC 80 = machining center","ok_modes":["type","brand"]}
+{"slug":"8850475-used-2014-kaltenbach-kks-451-cnc","note":"Kaltenbach = metal saw","ok_modes":["type","brand"]}
+{"slug":"8665289-used-2023-format-4-tempora-45-03l","note":"Format-4 = woodworking (Felder)","ok_modes":["type","brand"]}
+{"slug":"9103561-used-2018-holzher-7535-standalone","note":"Holz-Her 7535 = CNC nesting (NOT edgebander!) — hard sub-type","ok_modes":["brand","type"],"forbid_type":["edge","band"]}
+{"slug":"7534977-used-2009-complete-power-plant-10-mw-2-mw","note":"power plant (junk brand, thin type) -> abstain","ok_modes":["abstain"]}
+{"slug":"6691645-used-prima-rapido","note":"Prima = collision brand -> abstain","ok_modes":["abstain"]}
+{"slug":"8182308-used-2019-mechatronic-mwl-150-square","note":"Mechatronic = collision brand -> abstain","ok_modes":["abstain"]}
+{"slug":"8089502-used-2019-nexa3d-qls260","note":"Nexa3D = 3D printer (thin 'printer') -> brand","ok_modes":["brand"]}
+{"slug":"9008116-used-2018-prodways-promaker-ld10","note":"Prodways = SLA 3D printer; type 'stereolithography' is a precise audience, brand also fine","ok_modes":["brand","type"]}
+{"slug":"8565050-used-1994-lindemann-lu800-8p-a60-press","note":"Lindemann LU800 = scrap baling press -> brand","ok_modes":["brand","type"]}
+{"slug":"5426254-2023-karl-schnell-grinding-line-for-frozen-synthesis","note":"Karl Schnell = FOOD grinder (not metal!) — domain guard","ok_modes":["brand","type"]}
+{"slug":"6755217-used-1991-omec-fsu-600-acg","note":"Omec FSU = gear machine","ok_modes":["type","brand"]}
+{"slug":"8727407-used-3x-tornos-deco-10mm-with-lns-tryton-112-loading-magazines","note":"Tornos Deco = Swiss lathe","ok_modes":["type","brand"]}
+{"slug":"8727709-used-complete-clean-room-equipment-package","note":"clean room package -> abstain, cleanroom-type, or small on-brand list all safe","ok_modes":["abstain","type","brand"]}
+{"slug":"9110692-used-2008-viscom-s-3088-ii-aoi-machine","note":"Viscom AOI (electronics inspection)","ok_modes":["type","brand"]}
+{"slug":"8334226-used-2020-all-fill-series-200-twin-head-automatic-filling-machine","note":"All-Fill filling machine (thin 'filling') -> brand","ok_modes":["brand"]}
+{"slug":"8724803-used-1990-fasti-bending-machine","note":"Fasti = sheet metal folder/bender (thin 'bending')","ok_modes":["brand","type"]}
+{"slug":"9085664-used-2024-ferber-act-sp-with-control-table","note":"Ferber = woodworking (obscure)","ok_modes":["brand","abstain"]}
+{"slug":"9110658-used-2010-ekra-x5-prof-screen-printer","note":"EKRA = SMT stencil printer (NOT textile screen printer)","ok_modes":["type","brand"],"forbid_type":["textile","graphic"]}

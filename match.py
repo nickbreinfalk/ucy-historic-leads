@@ -103,14 +103,39 @@ def build_type_query(mtype):
 _VAGUE_TYPE = {"truck", "vehicle", "machine", "equipment", "system", "unit", "line",
                "plant", "device", "tool", "complete", "used", "automatic"}
 
+# operation/material words so broad they don't define a buyer audience on their own:
+# they span industries or whole machine families ('printer' = graphic/label/3D;
+# 'filling' = liquid/powder/any product; 'grinding' = metal AND food). A type built
+# ONLY of these is "thin" — it can't anchor a clean type match, so the matcher routes
+# by BRAND instead (the brand pins the real audience). NB: single-domain operations
+# kept OUT on purpose (milling/turning/lathe/boring/welding) — those match cleanly.
+BROAD_TYPE_TOKENS = {
+    "printer", "printing", "screen", "filling", "filler", "power", "roller",
+    "rolling", "packaging", "coating", "mixing", "mixer", "cutting", "cutter",
+    "grinding", "washing", "cleaning", "cleaner", "washer", "drilling", "sanding",
+    "conveyor", "conveying", "heating", "cooling", "drying", "loading", "lifting",
+    "feeding", "spraying", "pressing",
+    # 'press' alone spans press brake / stamping / hydraulic / baling / filter press —
+    # totally different buyers. Needs a qualifier ('press brake', 'filter press') to match.
+    "press",
+}
+_THIN = _VAGUE_TYPE | BROAD_TYPE_TOKENS
+
+def type_is_thin(mtype):
+    """True if a machine_type has NO discriminating token — only vague/broad words
+    that span domains. Such a type can't define a clean cross-brand audience."""
+    toks = core_tokens(mtype)
+    return (not toks) or all(t in _THIN for t in toks)
+
 def type_grounded(mtype, title):
-    """True if a MEANINGFUL machine type is actually stated in the title (not just
-    inferred from a cryptic model, and not just a vague word like 'truck'/'machine').
-    Routes the matcher: grounded -> match by TYPE; else -> AI-confidence / BRAND.
-    Every core token (or a curated synonym) must appear in the title."""
+    """True if a MEANINGFUL, DISCRIMINATING machine type is actually stated in the
+    title — not inferred from a cryptic model, not a vague word ('truck'/'machine'),
+    and not only broad cross-domain words ('printer'/'filling'/'screen'). Routes the
+    matcher: grounded -> match by TYPE; else -> AI-confidence / BRAND. Every core
+    token (or a curated synonym) must appear in the title."""
     tl = (title or "").lower()
     toks = core_tokens(mtype)
-    if not toks or all(t in _VAGUE_TYPE for t in toks):
+    if not toks or type_is_thin(mtype):
         return False
     for t in toks:
         if not any(re.search(r"\b" + re.escape(a) + r"\b", tl) for a in [t] + TYPE_SYN.get(t, [])):

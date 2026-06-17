@@ -31,10 +31,15 @@ HAIKU_SCHEMA = {
                      "description": "discriminating terms that identify THIS machine TYPE in other listings"},
         "noise_terms": {"type": "array", "items": {"type": "string"},
                         "description": "tokens in this title that are model codes/years/brand fragments to ignore"},
+        "domain": {"type": "string",
+                   "enum": ["metalworking", "woodworking", "food_processing", "packaging",
+                            "plastics_rubber", "semiconductor_smt", "textile", "printing_graphic",
+                            "aggregate_construction", "pharma_chemical", "generic"],
+                   "description": "the INDUSTRY this machine belongs to — this is the buyer's vertical. A machining center/router/saw/grinder/drill exists in BOTH metalworking and woodworking: pick by the brand and context. 'generic' only if it truly spans industries (forklift, compressor)."},
         "confidence": {"type": "string", "enum": ["high", "low"],
                        "description": "high ONLY if the machine type is written in the title OR you genuinely recognize this exact brand+model; low if you're inferring the type from an unfamiliar brand/model name"},
     },
-    "required": ["brand", "category", "synonyms", "noise_terms", "confidence"],
+    "required": ["brand", "category", "synonyms", "noise_terms", "domain", "confidence"],
     "additionalProperties": False,
 }
 HAIKU_SYSTEM = (
@@ -52,7 +57,12 @@ HAIKU_SYSTEM = (
     "strong type-specific terms (sensing method, sub-type). Think about what genuinely-interested buyers "
     "actually typed. Each synonym must be specific enough that a match almost certainly means the same "
     "machine type — err toward precision, but cover the real variants.\n"
-    "- noise_terms: tokens in THIS title that are model numbers, years, dimensions, or fragments to ignore.\n\n"
+    "- noise_terms: tokens in THIS title that are model numbers, years, dimensions, or fragments to ignore.\n"
+    "- domain: the INDUSTRY/vertical of the buyer — metalworking, woodworking, food_processing, packaging, "
+    "plastics_rubber, semiconductor_smt, textile, printing_graphic, aggregate_construction, pharma_chemical, "
+    "or generic. This is critical: the SAME machine word means different buyers in different industries (a "
+    "grinder/saw/router/machining-center exists in metalworking AND woodworking AND food). Decide the domain "
+    "from the brand and context, not the bare type word.\n\n"
     "NEVER put generic words in synonyms ('machine', 'used', 'automatic', 'cnc', 'line', 'system', 'new') "
     "or the model number/year/dimensions — those pull in unrelated machines.\n"
     "CRITICAL — each synonym must denote the SAME SPECIFIC machine, at the same level of specificity. "
@@ -159,16 +169,18 @@ def _recognize(text, patterns):
     confident = (phrase or blen >= 4) and dominant
     return best, confident
 
-def _haiku_classify(title):
-    """One Haiku call for a genuinely new machine type. None on any failure."""
+def _haiku_classify(title, hint=""):
+    """One Haiku call for a genuinely new machine type. None on any failure.
+    `hint` is appended to the user message (e.g. a multi-type-brand skeptic nudge)."""
     try:
         from anthropic import Anthropic
         client = Anthropic()  # reads ANTHROPIC_API_KEY
+        content = f"Listing title: {title}" + (f"\n\n{hint}" if hint else "")
         resp = client.messages.create(
             model="claude-haiku-4-5",
             max_tokens=512,
             system=HAIKU_SYSTEM,
-            messages=[{"role": "user", "content": f"Listing title: {title}"}],
+            messages=[{"role": "user", "content": content}],
             output_config={"format": {"type": "json_schema", "schema": HAIKU_SCHEMA}},
         )
         text = next(b.text for b in resp.content if b.type == "text")
@@ -266,20 +278,31 @@ def classify_stable(title, slug="", url="", votes=3):
     Lean: only the Haiku call (no DB) — the v2 matcher needs just brand + category."""
     from collections import Counter
     from match import core_tokens
+    from registry import is_multi_type_brand
     if not slug and url:
         m = re.search(r"/listings/\d+-(.+?)/?$", url)
         slug = m.group(1).replace("-", " ") if m else ""
     brand = extract_brand(title) or extract_brand(slug)
-    cats, confs, hbrands = [], [], []
+    # multi-type brands (Trumpf, Biesse, Holz-Her...) make many machine types, so a
+    # bare model rarely pins the type — push Haiku to be honest about not knowing.
+    hint = ""
+    if brand and is_multi_type_brand(brand):
+        hint = (f"NOTE: the manufacturer '{brand}' makes MANY different machine types, so the model "
+                f"number alone often does NOT reveal the exact type. Set confidence='high' ONLY if you "
+                f"genuinely recognise this exact model and its precise type/sub-type; otherwise 'low'.")
+    cats, confs, hbrands, doms = [], [], [], []
     for _ in range(votes):
-        h = _haiku_classify(title)
+        h = _haiku_classify(title, hint)
         if h:
             cats.append(h["category"]); confs.append(h.get("confidence", "low"))
             if h.get("brand"):
                 hbrands.append(h["brand"])
+            if h.get("domain"):
+                doms.append(h["domain"])
     brand = brand or (Counter(hbrands).most_common(1)[0][0] if hbrands else "")
+    domain = Counter(doms).most_common(1)[0][0] if doms else ""
     if not cats:  # Haiku unavailable -> rule fallback, low confidence
-        return {"brand": brand, "category": rule_extract_category(title),
+        return {"brand": brand, "category": rule_extract_category(title), "domain": domain,
                 "confidence": "low", "used_haiku": False, "recognized": "rules (fallback)"}
     fams = [frozenset(core_tokens(c)) for c in cats]
     top_fam, top_n = Counter(fams).most_common(1)[0]
@@ -288,7 +311,7 @@ def classify_stable(title, slug="", url="", votes=3):
     category = Counter(cands).most_common(1)[0][0]           # representative wording
     top_confs = [cf for cf, f in zip(confs, fams) if f == top_fam]
     conf = "high" if (stable and top_confs.count("high") * 2 >= len(top_confs)) else "low"
-    return {"brand": brand, "category": category, "confidence": conf,
+    return {"brand": brand, "category": category, "domain": domain, "confidence": conf,
             "used_haiku": True, "recognized": f"AI ({top_n}/{votes} agree): {category}"}
 
 def classify(title, slug="", url=""):
