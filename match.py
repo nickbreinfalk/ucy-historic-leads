@@ -48,7 +48,8 @@ TYPE_SYN = {
     "cleaner": ["cleaning", "washer", "washing", "wash"],
     "wash": ["cleaning", "washer", "washing", "cleaner"],
     "lathe": ["turning"], "turning": ["lathe"],
-    "milling": ["mill"], "mill": ["milling"],
+    # NB: deliberately NO milling<->mill — "mill" is a homonym (ball/rolling/grain/
+    # saw mill are NOT milling machines); it would flood a milling-machine search.
     "grinding": ["grinder"], "grinder": ["grinding"],
     "printing": ["printer"], "printer": ["printing"],
     "molding": ["moulding"], "moulding": ["molding"],
