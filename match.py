@@ -69,15 +69,19 @@ TYPE_SYN = {
     "stencil": ["smt", "smd", "solder"], "solder": ["smt", "smd", "stencil"],
 }
 
-def build_type_query(mtype):
-    """Deterministic to_tsquery string from a machine_type's core tokens, e.g.
-    'parts cleaning machine' -> '(parts) & (cleaning | washer | washing | cleaner | wash)'.
-    Returns '' if the type reduces to nothing (all generic/modifier)."""
+def core_tokens(mtype):
+    """Discriminating tokens of a machine_type (generic nouns + modifiers stripped)."""
     toks, seen = [], set()
     for w in re.findall(r"[a-z0-9]+", (mtype or "").lower()):
         if len(w) <= 2 or w in TYPE_GENERIC or w in TYPE_MODIFIER or w in seen:
             continue
         seen.add(w); toks.append(w)
+    return toks
+
+def build_type_query(mtype):
+    """Deterministic to_tsquery from a machine_type's core tokens, e.g.
+    'parts cleaning machine' -> '(parts) & (cleaning | washer | washing | cleaner | wash)'."""
+    toks = core_tokens(mtype)
     if not toks:
         return ""
     groups = []
@@ -88,6 +92,20 @@ def build_type_query(mtype):
                 s2.add(a); alts.append(a)
         groups.append("(" + " | ".join(alts) + ")")
     return " & ".join(groups)
+
+def type_grounded(mtype, title):
+    """True if the machine TYPE is actually stated in the title (not just inferred
+    from a cryptic model number). This routes the matcher: grounded -> match by TYPE;
+    not grounded (only a brand) -> match by BRAND. Every core token (or a curated
+    synonym) must appear in the title."""
+    tl = (title or "").lower()
+    toks = core_tokens(mtype)
+    if not toks:
+        return False
+    for t in toks:
+        if not any(re.search(r"\b" + re.escape(a) + r"\b", tl) for a in [t] + TYPE_SYN.get(t, [])):
+            return False
+    return True
 
 SCORED_CTE = """
 with scored as (
@@ -146,23 +164,54 @@ where t.tier > 0
 group by t.tier order by t.tier desc
 """
 
+# BRAND MODE — used when the title gives only a brand, no clear type. Returns every
+# contact who inquired about that brand (any machine), ranked by inquiry count/recency.
+_BRAND_WHERE = ("%(brand)s <> '' and ( lower(brand) = lower(%(brand)s) "
+                "or lower(brand) like lower(%(brand)s) || ' %%' )")
+BRAND_SQL = f"""
+select email,
+       (array_agg(company    order by created_date desc nulls last))[1] as company,
+       (array_agg(first_name order by created_date desc nulls last))[1] as first_name,
+       (array_agg(last_name  order by created_date desc nulls last))[1] as last_name,
+       (array_agg(phone      order by created_date desc nulls last))[1] as phone,
+       (array_agg(country    order by created_date desc nulls last))[1] as country,
+       (array_agg(city       order by created_date desc nulls last))[1] as city,
+       count(*)          as past_requests,
+       max(created_date) as last_request,
+       4                 as tier,
+       round((4000 + ln(1 + count(*)))::numeric, 3) as relevance,
+       (array_agg(distinct listing_title))[1:3] as example_requests
+from leads
+where {_BRAND_WHERE}
+group by email
+order by past_requests desc, last_request desc nulls last
+"""
+
 def _params(brand, mtype, min_tier=3):
     brand = re.sub(r"([%_\\])", r"\\\1", brand or "")  # escape LIKE wildcards
     mtype = (mtype or "").lower().strip()              # leads.machine_type is lowercase
     return {"brand": brand, "mtype": mtype, "typeq": build_type_query(mtype), "min_tier": min_tier}
 
-def match(brand="", mtype="", limit=None, min_tier=3):
-    p = _params(brand, mtype, min_tier)
-    sql = MATCH_SQL + (f"\nlimit {int(limit)}" if limit else "")
+def match(brand="", mtype="", brand_only=False, limit=None, min_tier=3):
+    if brand_only:
+        p = {"brand": re.sub(r"([%_\\])", r"\\\1", brand or "")}
+        sql = BRAND_SQL
+    else:
+        p = _params(brand, mtype, min_tier)
+        sql = MATCH_SQL
+    sql += (f"\nlimit {int(limit)}" if limit else "")
     with psycopg.connect(os.environ["SUPABASE_DB_URL"], autocommit=True) as conn:
         cur = conn.execute(sql, p)
         cols = [d.name for d in cur.description]
         return [dict(zip(cols, row)) for row in cur.fetchall()]
 
-def count_by_tier(brand="", mtype=""):
-    p = _params(brand, mtype)
+def count_by_tier(brand="", mtype="", brand_only=False):
     with psycopg.connect(os.environ["SUPABASE_DB_URL"], autocommit=True) as conn:
-        return {int(t): int(n) for t, n in conn.execute(COUNT_SQL, p).fetchall()}
+        if brand_only:
+            p = {"brand": re.sub(r"([%_\\])", r"\\\1", brand or "")}
+            n = conn.execute(f"select count(distinct email) from leads where {_BRAND_WHERE}", p).fetchone()[0]
+            return {4: int(n)}
+        return {int(t): int(n) for t, n in conn.execute(COUNT_SQL, _params(brand, mtype)).fetchall()}
 
 def tier_summary(counts):
     """-> (total, brand_buyers, type_buyers)"""
