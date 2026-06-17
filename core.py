@@ -9,7 +9,7 @@ or ✓ (recognized from cache) tag so usage is always visible.
 """
 import io, csv, re
 from listing import parse_listing, strip_location
-from classify import classify
+from classify import classify_stable
 from match import match, type_grounded
 
 _COUNTRY_ABBR = {"United States": "USA", "United States of America": "USA",
@@ -47,6 +47,20 @@ def _tag(profile):
         return f":warning: _matched by rules (AI temporarily unavailable) · type: {cat}_"
     return f":information_source: _matched from cache (AI temporarily unavailable) · type: {cat}_"
 
+# generic words that are NOT real machine brands — a listing that reduces to one of
+# these (parts packages, equipment inventories, seller names) can't be matched.
+_JUNK_BRAND = {"motor", "industrial", "complete", "equipment", "power", "used", "new",
+               "machine", "package", "inventory", "products", "plant", "system", "line",
+               "metalworking", "welding", "general", "misc", "various", "lot", "sds"}
+
+def _is_junk_brand(b):
+    b = (b or "").strip().lower()
+    if not b or len(b) <= 2:
+        return True
+    # junk if ANY word in the "brand" is a generic term ("Motor Accessories Package",
+    # "Industrial Metalworking ...") — these are descriptions/inventories, not brands.
+    return bool({w for w in re.findall(r"[a-z]+", b)} & _JUNK_BRAND)
+
 def build_reply(url):
     """Returns {info, rows, summary, csv, filename}. csv/filename None if no matches.
 
@@ -55,7 +69,7 @@ def build_reply(url):
     title) -> match by BRAND (everyone who inquired about that brand). Either way
     the CSV is one clean, blast-ready list — never a wrong-type guess."""
     info = parse_listing(url)
-    profile = classify(info["title"], url=url)
+    profile = classify_stable(info["title"], url=url)
     mtype = profile["category"] or ""
     brand = profile["brand"] or ""
     title = _clean_title(info["title"])
@@ -64,8 +78,22 @@ def build_reply(url):
     # recognises the exact model (validated calibrated). Otherwise — only a brand,
     # type is a guess — match by BRAND (all that brand's inquirers), never a guess.
     confident = profile.get("confidence") == "high"
-    by_brand = bool(brand) and not type_grounded(mtype, info["title"]) and not confident
+    grounded = type_grounded(mtype, info["title"])
+    by_brand = bool(brand) and not grounded and not confident
+    # junk listing: type isn't confidently known AND there's no real brand to fall
+    # back to (parts package, equipment inventory, seller name) -> don't blast garbage.
+    if not grounded and not confident and _is_junk_brand(brand):
+        return {"info": info, "profile": profile, "rows": [], "csv": None, "filename": None,
+                "summary": f":warning: Couldn't confidently identify *{_clean_title(info['title'])}* "
+                           f"— not a clear machine type or brand. Needs a human look."}
     rows = match(brand, brand_only=True) if by_brand else match(brand, mtype=mtype)
+    # recall floor: a near-empty TYPE result (when the type wasn't in the title)
+    # usually means the type was too specific or slightly off — fall back to the
+    # fuller, on-brand brand-mode list if we have a real brand.
+    if not by_brand and not grounded and brand and not _is_junk_brand(brand) and len(rows) < 25:
+        br = match(brand, brand_only=True)
+        if len(br) > len(rows):
+            rows, by_brand = br, True
 
     if not rows:
         what = f"brand `{brand}`" if by_brand else f"type `{mtype or '—'}`"

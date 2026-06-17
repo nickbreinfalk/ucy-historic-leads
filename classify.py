@@ -67,7 +67,19 @@ HAIKU_SYSTEM = (
     "it is (e.g. 'Haas ST-10' = a CNC lathe; 'Agfa Anapurna' = a flatbed printer). Set confidence='low' "
     "whenever you are GUESSING the type from an unfamiliar brand or a model number you don't truly "
     "recognise (e.g. 'Jetrix KX7', 'Akira-Seiki SV 1150', 'Ingersoll Rand TH60') — even if a guess seems "
-    "plausible. When in doubt, 'low'."
+    "plausible. When in doubt, 'low'.\n"
+    "'high' ALSO requires certainty about the EXACT type — SUB-TYPE and DOMAIN included, because a near-miss "
+    "still reaches the wrong buyers:\n"
+    "  - flat-sheet laser cutter vs TUBE laser cutter (e.g. Trumpf TruLaser 3030 = flat sheet; only some models cut tube)\n"
+    "  - roll-to-roll vs FLATBED wide-format printer\n"
+    "  - SMT solder-paste/stencil printer vs TEXTILE/graphic screen printer\n"
+    "  - WOODWORKING vs METALWORKING machining center / router / sander / saw / drill (Biesse, Homag, Format-4, "
+    "Altendorf, Bütfering, Felder = WOODWORKING; Doosan, Mazak, DMG, Haas = METAL)\n"
+    "  - powder/auger filler vs LIQUID filling line\n"
+    "  - tunnel boring machine (civil) vs horizontal BORING mill (metalworking)\n"
+    "If you are sure it's 'a laser' but NOT sure flat vs tube, or sure it's 'a machining center' but NOT sure "
+    "wood vs metal, that is 'low'. When the brand spans several machine types (Trumpf, Prima, Bystronic = "
+    "laser + press brake/punch) and the model doesn't pin the exact one down, say 'low'."
 )
 
 def _conn():
@@ -246,6 +258,39 @@ def _terms_from_synonyms(brand, synonyms):
             seen.add(p.lower()); out.append(p)
     return " or ".join(out)
 
+def classify_stable(title, slug="", url="", votes=3):
+    """Self-consistency wrapper: classify the SAME listing several times and only
+    trust the type if the votes AGREE (same machine family). A flip-flopping answer
+    is noise (a guess) -> downgraded to low confidence -> brand-mode. This kills the
+    run-to-run routing flips that caused intermittent wrong-audience CSVs.
+    Lean: only the Haiku call (no DB) — the v2 matcher needs just brand + category."""
+    from collections import Counter
+    from match import core_tokens
+    if not slug and url:
+        m = re.search(r"/listings/\d+-(.+?)/?$", url)
+        slug = m.group(1).replace("-", " ") if m else ""
+    brand = extract_brand(title) or extract_brand(slug)
+    cats, confs, hbrands = [], [], []
+    for _ in range(votes):
+        h = _haiku_classify(title)
+        if h:
+            cats.append(h["category"]); confs.append(h.get("confidence", "low"))
+            if h.get("brand"):
+                hbrands.append(h["brand"])
+    brand = brand or (Counter(hbrands).most_common(1)[0][0] if hbrands else "")
+    if not cats:  # Haiku unavailable -> rule fallback, low confidence
+        return {"brand": brand, "category": rule_extract_category(title),
+                "confidence": "low", "used_haiku": False, "recognized": "rules (fallback)"}
+    fams = [frozenset(core_tokens(c)) for c in cats]
+    top_fam, top_n = Counter(fams).most_common(1)[0]
+    stable = top_n >= (votes // 2 + 1)                       # a real majority agreed
+    cands = [c for c, f in zip(cats, fams) if f == top_fam]
+    category = Counter(cands).most_common(1)[0][0]           # representative wording
+    top_confs = [cf for cf, f in zip(confs, fams) if f == top_fam]
+    conf = "high" if (stable and top_confs.count("high") * 2 >= len(top_confs)) else "low"
+    return {"brand": brand, "category": category, "confidence": conf,
+            "used_haiku": True, "recognized": f"AI ({top_n}/{votes} agree): {category}"}
+
 def classify(title, slug="", url=""):
     """Return a profile dict: brand, category, terms, used_haiku, recognized."""
     if not slug and url:
@@ -265,14 +310,17 @@ def classify(title, slug="", url=""):
                 syn_text = " ".join(prof["synonyms"])
                 # cluster onto an existing learned type by synonym overlap (so phrasing
                 # drift in the category label doesn't fragment the knowledge)
+                # USE THE FRESH classification — never override it with a cached
+                # category. The old clustering remapped correct fresh types onto
+                # stale same-family ones (flatbed laser -> "tube laser", cnc router
+                # -> "machining center", tunnel boring -> "horizontal boring"),
+                # which blasted the wrong audience. The v2 matcher canonicalises by
+                # core-tokens/families and no longer uses these cached synonyms, so
+                # the override has no upside — only harm.
+                category = prof["category"]
                 existing, _ = _recognize(syn_text, patterns)
-                # GUARDRAIL: only accept the cluster if it's the SAME machine family as
-                # Haiku's fresh type. If they share no meaningful word, the synonym
-                # overlap was incidental (cross-type pollution) — trust Haiku's type and
-                # keep them as separate patterns. Prevents fusing e.g. AOI into CMM.
-                if existing and not _same_family(existing["category"], prof["category"]):
+                if existing and not _same_family(existing["category"], category):
                     existing = None
-                category = existing["category"] if existing else prof["category"]
                 noise = prof.get("noise_terms", [])
                 # accumulate Haiku's terms into the canonical row (the cache learns),
                 # sanitized so model fragments never get stored
