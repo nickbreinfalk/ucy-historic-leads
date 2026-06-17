@@ -12,6 +12,7 @@ from listing import parse_listing, strip_location
 from classify import classify_stable
 from match import match, type_grounded, type_is_thin
 from registry import brand_domain, is_collision_brand
+from gate import audit_list
 
 _COUNTRY_ABBR = {"United States": "USA", "United States of America": "USA",
                  "United Arab Emirates": "UAE", "United Kingdom": "UK"}
@@ -123,6 +124,29 @@ def build_reply(url):
         if len(br) > len(rows):
             rows, by_brand, mode = br, True, "brand"
 
+    # --- final independent audience check + repair (Sonnet sees the ACTUAL leads,
+    #     which the title-only classifier never did). Skipped for grounded type
+    #     lists with a healthy pool (safe by construction); focused on the
+    #     ungrounded / brand / thin / empty cases where mistakes actually happen. ---
+    gate_note = ""
+    if not (grounded and len(rows) >= 50):
+        sample, seen = [], set()
+        for r in rows[:12]:
+            for t in (r.get("example_requests") or []):
+                s = strip_location(t)
+                if s and s not in seen:
+                    seen.add(s); sample.append(s)
+        g = audit_list(info["title"], mode, mtype, brand, len(rows), sample[:20])
+        if g:
+            if g["assessment"] == "repair" and g.get("repair_type"):
+                rep = match(brand, mtype=g["repair_type"])
+                if len(rep) > len(rows):
+                    rows, mode, mtype = rep, "type", g["repair_type"]
+                    gate_note = f"\n:wrench: _auto-expanded to type `{mtype}`_"
+            elif g["assessment"] == "flag":
+                gate_note = f"\n:warning: _auto-check: {g['reason']} — glance before sending_"
+    by_brand = mode == "brand"
+
     if not rows:
         what = f"brand `{brand}`" if by_brand else f"type `{mtype or '—'}`"
         return {"info": info, "profile": profile, "mode": mode, "rows": [], "csv": None, "filename": None,
@@ -149,7 +173,7 @@ def build_reply(url):
 
     summary = (f":dart: *{title}* — *{len(rows):,} leads*\n"
                f"{head}\n"
-               f":earth_africa: top: {top}")
+               f":earth_africa: top: {top}{gate_note}")
     filename = (re.sub(r"[^a-zA-Z0-9]+", "_", title)[:50] or "leads") + "_leads.csv"
     return {"info": info, "profile": profile, "mode": mode, "rows": rows,
             "summary": summary, "csv": _csv_bytes(rows), "filename": filename}
