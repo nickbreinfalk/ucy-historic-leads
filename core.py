@@ -38,7 +38,10 @@ def build_reply(url):
     """Returns {info, rows, summary, csv, filename}. csv/filename None if no matches."""
     info = parse_listing(url)
     profile = classify(info["title"], url=url)
-    rows = match(profile["brand"], profile["terms"], profile["category"])  # all tier>=3
+    # category is matched against BOTH the old `category` col and the AI-backfilled
+    # `machine_type` col (mtype) — the latter catches terse brand+model leads.
+    rows = match(profile["brand"], profile["terms"], profile["category"],
+                 mtype=profile["category"])  # all tier>=3
 
     if not rows:
         return {"info": info, "profile": profile, "rows": [], "csv": None, "filename": None,

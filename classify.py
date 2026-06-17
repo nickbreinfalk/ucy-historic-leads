@@ -81,6 +81,25 @@ def _overlap_synonyms(text, patterns):
                 out.extend(p["synonyms"]); break
     return out
 
+# words too generic to prove two category labels are the same machine family
+_FAMILY_STOP = {"machine", "machines", "cnc", "automatic", "automated", "line",
+                "system", "used", "new", "axis", "mm", "industrial", "complete"}
+
+def _family_tokens(cat):
+    # NB: deliberately does NOT use GENERIC_NOUNS — that strips machine-DEFINING
+    # words (press, center, machining...) which are exactly what proves a family.
+    # Only the truly-generic _FAMILY_STOP words are dropped.
+    return {w for w in re.findall(r"[a-z0-9]+", (cat or "").lower())
+            if len(w) > 2 and w not in _FAMILY_STOP}
+
+def _same_family(cat_a, cat_b):
+    """True if two category labels share a meaningful (non-generic) word — i.e.
+    they're plausibly the same kind of machine. Used as a GUARDRAIL so the
+    self-learning clustering never FUSES unrelated types: e.g. Haiku says
+    'automated optical inspection' but the synonym overlap lands on 'coordinate
+    measuring machine' — no shared word -> don't override Haiku, keep them apart."""
+    return bool(_family_tokens(cat_a) & _family_tokens(cat_b))
+
 def _recognize(text, patterns):
     """Return (best_pattern, confident). confident=True only when the match is
     specific (a phrase or a >=4-char token) AND unambiguous (one type matched, or
@@ -204,6 +223,12 @@ def classify(title, slug="", url=""):
                 # cluster onto an existing learned type by synonym overlap (so phrasing
                 # drift in the category label doesn't fragment the knowledge)
                 existing, _ = _recognize(syn_text, patterns)
+                # GUARDRAIL: only accept the cluster if it's the SAME machine family as
+                # Haiku's fresh type. If they share no meaningful word, the synonym
+                # overlap was incidental (cross-type pollution) — trust Haiku's type and
+                # keep them as separate patterns. Prevents fusing e.g. AOI into CMM.
+                if existing and not _same_family(existing["category"], prof["category"]):
+                    existing = None
                 category = existing["category"] if existing else prof["category"]
                 noise = prof.get("noise_terms", [])
                 # accumulate Haiku's terms into the canonical row (the cache learns),

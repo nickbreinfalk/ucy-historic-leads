@@ -5,8 +5,15 @@ optional category), find historic leads, deduped to one contact per email.
 Tiers (per contact = max over their matching rows):
   5  bought this BRAND and this TYPE        (hottest)
   4  bought this BRAND (any machine)
-  3  bought this TYPE (matched a discriminating synonym or the category)
+  3  bought this TYPE (machine_type col exact hit, category col, OR a
+     discriminating synonym in the title)
 Rows that match neither brand nor type are not returned.
+
+The `machine_type` column (AI-backfilled, brand-free, ~95% coverage) is matched
+by exact equality against the listing's own classified type (`mtype`). This is
+the key recall win for TERSE leads — a row titled just "Haas VF-2" shares no
+type-words with the synonym query, but its machine_type ("vertical machining
+center") still matches. Index-backed (leads_machine_type_idx), so it's cheap.
 
 relevance = tier*1000 + ts_rank*10 + ln(1+past_requests)
   -> tier dominates; within a tier, more-specific + repeat + recent rise.
@@ -27,6 +34,7 @@ with scored as (
            ( %(brand)s <> '' and ( lower(brand) = lower(%(brand)s)
                                     or lower(brand) like lower(%(brand)s) || ' %%' ) ) as brand_match,
            ( ( %(category)s <> '' and category = %(category)s )
+             or ( %(mtype)s <> '' and machine_type = %(mtype)s )
              or ( %(terms)s <> '' and to_tsvector('simple', listing_title)
                       @@ websearch_to_tsquery('simple', %(terms)s) ) ) as type_match,
            case when %(terms)s <> '' then
@@ -37,6 +45,7 @@ with scored as (
     where ( %(brand)s <> '' and ( lower(brand) = lower(%(brand)s)
                                   or lower(brand) like lower(%(brand)s) || ' %%' ) )
        or ( %(category)s <> '' and category = %(category)s )
+       or ( %(mtype)s <> '' and machine_type = %(mtype)s )
        or ( %(terms)s <> '' and to_tsvector('simple', listing_title)
                 @@ websearch_to_tsquery('simple', %(terms)s) )
 ),
@@ -77,20 +86,22 @@ where t.tier > 0
 group by t.tier order by t.tier desc
 """
 
-def _params(brand, terms, category, min_tier=3):
+def _params(brand, terms, category, mtype="", min_tier=3):
     brand = re.sub(r"([%_\\])", r"\\\1", brand or "")  # escape LIKE wildcards
-    return {"brand": brand, "terms": terms or "", "category": category or "", "min_tier": min_tier}
+    return {"brand": brand, "terms": terms or "", "category": category or "",
+            "mtype": (mtype or "").lower().strip(),  # leads.machine_type is lowercase
+            "min_tier": min_tier}
 
-def match(brand="", terms="", category="", limit=None, min_tier=3):
-    p = _params(brand, terms, category, min_tier)
+def match(brand="", terms="", category="", mtype="", limit=None, min_tier=3):
+    p = _params(brand, terms, category, mtype, min_tier)
     sql = MATCH_SQL + (f"\nlimit {int(limit)}" if limit else "")
     with psycopg.connect(os.environ["SUPABASE_DB_URL"], autocommit=True) as conn:
         cur = conn.execute(sql, p)
         cols = [d.name for d in cur.description]
         return [dict(zip(cols, row)) for row in cur.fetchall()]
 
-def count_by_tier(brand="", terms="", category=""):
-    p = _params(brand, terms, category)
+def count_by_tier(brand="", terms="", category="", mtype=""):
+    p = _params(brand, terms, category, mtype)
     with psycopg.connect(os.environ["SUPABASE_DB_URL"], autocommit=True) as conn:
         return {int(t): int(n) for t, n in conn.execute(COUNT_SQL, p).fetchall()}
 
@@ -119,12 +130,13 @@ if __name__ == "__main__":
     ap.add_argument("--brand", default="")
     ap.add_argument("--terms", default="")
     ap.add_argument("--category", default="")
+    ap.add_argument("--mtype", default="")
     ap.add_argument("--out", default="")
     a = ap.parse_args()
-    counts = count_by_tier(a.brand, a.terms, a.category)
+    counts = count_by_tier(a.brand, a.terms, a.category, a.mtype)
     total, brand, typ = tier_summary(counts)
     print(f"pool: {total} matched  |  {brand} brand  /  {typ} type")
-    rows = match(a.brand, a.terms, a.category)
+    rows = match(a.brand, a.terms, a.category, a.mtype)
     for r in rows[:15]:
         print(f"  T{r['tier']} [{r['relevance']}] {r['past_requests']}x  "
               f"{(r['company'] or '')[:26]:26}  {r['email']:34}  {r['country']}")
