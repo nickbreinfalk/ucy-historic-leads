@@ -14,10 +14,13 @@ matches plain 'milling' or 'plate rolling'. It runs against the AI-backfilled
 machine_type column (primary, ~99% coverage) and the listing_title (secondary,
 for the few still-untyped leads). Same machine in -> same list out.
 
-Tiers (per contact = max over their rows):
-  5  inquired about this BRAND and this TYPE
-  4  inquired about this BRAND
-  3  inquired about this TYPE
+Output tiers (per contact = max over their rows):
+  5  inquired about this BRAND and this TYPE   (hottest)
+  3  inquired about this TYPE (any brand)
+Brand-ONLY matches (same brand, a DIFFERENT machine) are intentionally EXCLUDED:
+for selling a specific machine, "wanted this type" is the buying signal, and a
+different machine from the same brand is a weak fit that otherwise mis-ranks above
+real type matches. Brand loyalty still counts — it lifts a type match to tier 5.
 relevance = tier*1000 + ts_rank*10 + ln(1 + past_requests)  -> tier dominates.
 No row cap: every match, best-first.
 """
@@ -99,9 +102,9 @@ with scored as (
                   ts_rank(to_tsvector('simple', machine_type), to_tsquery('simple', %(typeq)s))
                 else 0 end as rank
     from leads
-    where ( %(brand)s <> '' and ( lower(brand) = lower(%(brand)s)
-                                  or lower(brand) like lower(%(brand)s) || ' %%' ) )
-       or ( %(mtype)s <> '' and machine_type = %(mtype)s )
+    -- candidate = TYPE match only (brand-only rows excluded). brand_match is still
+    -- computed above so a brand+type row becomes tier 5; pure-brand never enters.
+    where ( %(mtype)s <> '' and machine_type = %(mtype)s )
        or ( %(typeq)s <> '' and to_tsvector('simple', machine_type) @@ to_tsquery('simple', %(typeq)s) )
        or ( %(typeq)s <> '' and to_tsvector('simple', listing_title) @@ to_tsquery('simple', %(typeq)s) )
 ),

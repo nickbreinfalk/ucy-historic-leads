@@ -46,8 +46,8 @@ def build_reply(url):
         return {"info": info, "profile": profile, "rows": [], "csv": None, "filename": None,
                 "summary": (f":mag: No matching leads for *{info['title']}*.\n{_tag(profile)}")}
 
-    brand = sum(1 for r in rows if r["tier"] >= 4)
-    typ   = sum(1 for r in rows if r["tier"] == 3)
+    brand = sum(1 for r in rows if r["tier"] == 5)   # brand + type (hottest)
+    typ   = sum(1 for r in rows if r["tier"] == 3)   # this type (any brand)
     countries = {}
     for r in rows:
         c = (r.get("country") or "?").strip() or "?"
@@ -56,11 +56,12 @@ def build_reply(url):
 
     summary = (
         f":dart: *{len(rows):,} matching leads* for *{info['title']}*  "
-        f"— {brand:,} inquired about this brand · {typ:,} inquired about this type\n"
+        f"— {brand:,} inquired about this brand+type (hottest) · {typ:,} inquired about this type\n"
         f"> brand: `{profile['brand'] or '—'}`   type: `{profile['category'] or '—'}`\n"
         f"> top countries: {top}\n"
         f"CSV: all {len(rows):,} leads, ranked best-first "
-        f"(tier 5 = inquired about this brand+type · 4 = this brand · 3 = this type).\n"
+        f"(tier 5 = inquired about this brand + type · tier 3 = inquired about this type). "
+        f"Brand-only matches excluded.\n"
         f"{_tag(profile)}"
     )
     filename = (re.sub(r"[^a-zA-Z0-9]+", "_", info["title"])[:50] or "leads") + "_leads.csv"
