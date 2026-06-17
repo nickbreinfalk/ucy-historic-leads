@@ -73,7 +73,10 @@ def build_reply(url):
         c = (r.get("country") or "?").strip() or "?"
         c = _COUNTRY_ABBR.get(c, c)
         countries[c] = countries.get(c, 0) + 1
-    top = " · ".join(f"{c} {n}" for c, n in sorted(countries.items(), key=lambda x: -x[1])[:4])
+    ordered = sorted(countries.items(), key=lambda x: -x[1])
+    top = " · ".join(f"{c} {n:,}" for c, n in ordered[:4])
+    if len(ordered) > 4:
+        top += f" · +{len(ordered) - 4} more"
 
     if by_brand:
         head = f"brand `{brand}`  ·  _type unclear → all {brand} inquirers_"
@@ -86,7 +89,7 @@ def build_reply(url):
 
     summary = (f":dart: *{title}* — *{len(rows):,} leads*\n"
                f"{head}\n"
-               f":earth_africa: {top}")
+               f":earth_africa: top: {top}")
     filename = (re.sub(r"[^a-zA-Z0-9]+", "_", title)[:50] or "leads") + "_leads.csv"
     return {"info": info, "profile": profile, "rows": rows,
             "summary": summary, "csv": _csv_bytes(rows), "filename": filename}
