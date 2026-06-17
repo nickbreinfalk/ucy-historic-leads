@@ -31,8 +31,10 @@ HAIKU_SCHEMA = {
                      "description": "discriminating terms that identify THIS machine TYPE in other listings"},
         "noise_terms": {"type": "array", "items": {"type": "string"},
                         "description": "tokens in this title that are model codes/years/brand fragments to ignore"},
+        "confidence": {"type": "string", "enum": ["high", "low"],
+                       "description": "high ONLY if the machine type is written in the title OR you genuinely recognize this exact brand+model; low if you're inferring the type from an unfamiliar brand/model name"},
     },
-    "required": ["brand", "category", "synonyms", "noise_terms"],
+    "required": ["brand", "category", "synonyms", "noise_terms", "confidence"],
     "additionalProperties": False,
 }
 HAIKU_SYSTEM = (
@@ -58,7 +60,14 @@ HAIKU_SYSTEM = (
     "never add 'rolling machine' or 'rolling' (that's all rolling machines); for an 'SMT stencil printer' "
     "never add 'screen printer' (that's textile/graphic printing); for a 'parts cleaning machine' never add "
     "'cleaning system' (that's CIP/mud/ultrasonic cleaning). If a term would match a DIFFERENT kind of "
-    "machine or a whole family, leave it out."
+    "machine or a whole family, leave it out.\n\n"
+    "CONFIDENCE — be brutally honest here, a wrong-but-confident answer is the worst outcome: set "
+    "confidence='high' ONLY when the machine type is literally written in the title (e.g. '...Thread "
+    "Rolling Machine', '...Wheel Loader') OR you actually RECOGNISE this exact brand+model and know what "
+    "it is (e.g. 'Haas ST-10' = a CNC lathe; 'Agfa Anapurna' = a flatbed printer). Set confidence='low' "
+    "whenever you are GUESSING the type from an unfamiliar brand or a model number you don't truly "
+    "recognise (e.g. 'Jetrix KX7', 'Akira-Seiki SV 1150', 'Ingersoll Rand TH60') — even if a guess seems "
+    "plausible. When in doubt, 'low'."
 )
 
 def _conn():
@@ -272,19 +281,23 @@ def classify(title, slug="", url=""):
                 _store(conn, category, hb, stored, noise)
                 # search with EVERYTHING known about this type (all overlapping rows) + fresh Haiku
                 query_syn = _clean_synonyms(_merge(_overlap_synonyms(syn_text, patterns, category), prof["synonyms"]), noise)
+                # confidence: Haiku's own honest read on whether it KNOWS the type.
+                # Used to route type-mode vs brand-mode in core.build_reply.
                 return {"brand": hb, "category": category,
                         "terms": _terms_from_synonyms(hb, query_syn),
+                        "confidence": prof.get("confidence", "low"),
                         "used_haiku": True, "recognized": f"AI-classified: {category}"}
             # Haiku unavailable -> use the accumulated knowledge from the cache
             hit, _ = _recognize(text, patterns)
             if hit:
                 return {"brand": brand, "category": hit["category"],
                         "terms": _terms_from_synonyms(brand, _clean_synonyms(hit["synonyms"])),
-                        "used_haiku": False, "recognized": f"cache (AI unavailable): {hit['category']}"}
+                        "confidence": "low", "used_haiku": False,
+                        "recognized": f"cache (AI unavailable): {hit['category']}"}
     except Exception:
         traceback.print_exc()
     # fallback: rule-based extraction (Haiku/DB unavailable)
     cat = rule_extract_category(title)
-    return {"brand": brand, "category": cat,
+    return {"brand": brand, "category": cat, "confidence": "low",
             "terms": rule_build_terms(title, slug, brand, cat),
             "used_haiku": False, "recognized": "rules (fallback)"}

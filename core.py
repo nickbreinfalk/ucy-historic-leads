@@ -60,7 +60,11 @@ def build_reply(url):
     brand = profile["brand"] or ""
     title = _clean_title(info["title"])
 
-    by_brand = bool(brand) and not type_grounded(mtype, info["title"])
+    # Match by TYPE when the type is stated in the title OR the AI confidently
+    # recognises the exact model (validated calibrated). Otherwise — only a brand,
+    # type is a guess — match by BRAND (all that brand's inquirers), never a guess.
+    confident = profile.get("confidence") == "high"
+    by_brand = bool(brand) and not type_grounded(mtype, info["title"]) and not confident
     rows = match(brand, brand_only=True) if by_brand else match(brand, mtype=mtype)
 
     if not rows:

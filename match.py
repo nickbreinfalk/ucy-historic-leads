@@ -93,14 +93,19 @@ def build_type_query(mtype):
         groups.append("(" + " | ".join(alts) + ")")
     return " & ".join(groups)
 
+# too vague to be a useful "type" on their own — if the title only yields one of
+# these, treat it as NOT grounded (fall through to the AI-confidence / brand path).
+_VAGUE_TYPE = {"truck", "vehicle", "machine", "equipment", "system", "unit", "line",
+               "plant", "device", "tool", "complete", "used", "automatic"}
+
 def type_grounded(mtype, title):
-    """True if the machine TYPE is actually stated in the title (not just inferred
-    from a cryptic model number). This routes the matcher: grounded -> match by TYPE;
-    not grounded (only a brand) -> match by BRAND. Every core token (or a curated
-    synonym) must appear in the title."""
+    """True if a MEANINGFUL machine type is actually stated in the title (not just
+    inferred from a cryptic model, and not just a vague word like 'truck'/'machine').
+    Routes the matcher: grounded -> match by TYPE; else -> AI-confidence / BRAND.
+    Every core token (or a curated synonym) must appear in the title."""
     tl = (title or "").lower()
     toks = core_tokens(mtype)
-    if not toks:
+    if not toks or all(t in _VAGUE_TYPE for t in toks):
         return False
     for t in toks:
         if not any(re.search(r"\b" + re.escape(a) + r"\b", tl) for a in [t] + TYPE_SYN.get(t, [])):
