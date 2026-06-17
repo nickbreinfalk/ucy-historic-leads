@@ -43,26 +43,24 @@ def build_reply(url):
     rows = match(profile["brand"], mtype=profile["category"])  # all tier>=3
 
     if not rows:
+        nt = strip_location(info["title"]).replace(" for Sale", "").strip()
         return {"info": info, "profile": profile, "rows": [], "csv": None, "filename": None,
-                "summary": (f":mag: No matching leads for *{info['title']}*.\n{_tag(profile)}")}
+                "summary": f":mag: No matching leads for *{nt}*  (type: `{profile['category'] or '—'}`)"}
 
-    brand = sum(1 for r in rows if r["tier"] == 5)   # brand + type (hottest)
-    typ   = sum(1 for r in rows if r["tier"] == 3)   # this type (any brand)
+    t5  = sum(1 for r in rows if r["tier"] == 5)   # brand + type (hottest)
+    typ = sum(1 for r in rows if r["tier"] == 3)   # this type (any brand)
     countries = {}
     for r in rows:
         c = (r.get("country") or "?").strip() or "?"
         countries[c] = countries.get(c, 0) + 1
-    top = ", ".join(f"{c} ({n})" for c, n in sorted(countries.items(), key=lambda x: -x[1])[:5])
-
+    top = " · ".join(f"{c} {n}" for c, n in sorted(countries.items(), key=lambda x: -x[1])[:4])
+    clean_title = strip_location(info["title"]).replace(" for Sale", "").strip()
+    split = f"{t5:,} brand+type · {typ:,} type" if t5 else f"{typ:,} type"
     summary = (
-        f":dart: *{len(rows):,} matching leads* for *{info['title']}*  "
-        f"— {brand:,} inquired about this brand+type (hottest) · {typ:,} inquired about this type\n"
-        f"> brand: `{profile['brand'] or '—'}`   type: `{profile['category'] or '—'}`\n"
-        f"> top countries: {top}\n"
-        f"CSV: all {len(rows):,} leads, ranked best-first "
-        f"(tier 5 = inquired about this brand + type · tier 3 = inquired about this type). "
-        f"Brand-only matches excluded.\n"
-        f"{_tag(profile)}"
+        f":dart: *{clean_title}* — *{len(rows):,} leads*\n"
+        f"type `{profile['category'] or '—'}`  ·  brand `{profile['brand'] or '—'}`\n"
+        f":fire: {split}   ·   _ranked best-first; see `tier` column_\n"
+        f":earth_africa: {top}"
     )
     filename = (re.sub(r"[^a-zA-Z0-9]+", "_", info["title"])[:50] or "leads") + "_leads.csv"
     return {"info": info, "profile": profile, "rows": rows,
