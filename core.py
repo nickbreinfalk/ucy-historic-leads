@@ -8,7 +8,7 @@ Flow: parse the listing -> classify it (self-learning, Haiku only on new types)
 or ✓ (recognized from cache) tag so usage is always visible.
 """
 import io, csv, re
-from listing import parse_listing
+from listing import parse_listing, strip_location
 from classify import classify
 from match import match
 
@@ -21,7 +21,7 @@ def _csv_bytes(rows):
     w.writeheader()
     for r in rows:
         r = dict(r)
-        r["example_requests"] = " | ".join(r.get("example_requests") or [])
+        r["example_requests"] = " | ".join(strip_location(t) for t in (r.get("example_requests") or []))
         w.writerow(r)
     return buf.getvalue().encode("utf-8")
 

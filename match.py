@@ -123,12 +123,13 @@ def export_csv(rows, path):
         print("no matches"); return
     fields = ["company", "first_name", "last_name", "email", "phone", "country",
               "city", "tier", "past_requests", "last_request", "relevance", "example_requests"]
+    from listing import strip_location
     with open(path, "w", encoding="utf-8", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
         w.writeheader()
         for r in rows:
             r = dict(r)
-            r["example_requests"] = " | ".join(r.get("example_requests") or [])
+            r["example_requests"] = " | ".join(strip_location(t) for t in (r.get("example_requests") or []))
             w.writerow(r)
     print(f"wrote {len(rows)} contacts -> {path}")
 

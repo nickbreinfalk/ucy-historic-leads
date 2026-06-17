@@ -48,6 +48,16 @@ GENERIC_NOUNS = {
 # Short tokens that ARE discriminating industrial terms -> keep even before a number.
 INDUSTRIAL_ALLOW = {"ogp", "cmm", "edm", "vmc", "hmc", "cnc", "smt", "ems"}
 
+# Machinio appends a broker location: "... in <City>, <State/Country>" (or "... in
+# <Country>"). It's irrelevant to us and is noise in the matchable text / CSV display.
+# Strip only a TRAILING " in <Capitalized place>" so machine names like "bag in box"
+# (lowercase) are never touched.
+LOCATION_RE = re.compile(r"\s+in\s+[A-Z][\w.&'’\- ]*(?:,\s*[A-Za-z.\- ]+)?\s*$")
+
+def strip_location(title):
+    """Remove the trailing Machinio location tag from a listing title."""
+    return LOCATION_RE.sub("", title or "").strip()
+
 def build_terms(title, slug, brand, category):
     """OR-query of: detected-category keywords + bare brand + distinctive slug words.
     Filters generic nouns and bare model designators (e.g. 'zip' in 'ZIP 400')
@@ -57,9 +67,11 @@ def build_terms(title, slug, brand, category):
         for kw in CAT_KEYWORDS[category]:
             parts.append(f'"{kw}"' if " " in kw else kw)
     if brand:
-        # bare manufacturer only: a quoted "Heidelberg SM" becomes 'heidelberg & sm'
-        # in websearch_to_tsquery and EXCLUDES Heidelberg GTO/CD rows entirely.
-        parts.append(brand.split()[0])
+        # full brand as a phrase, NOT the bare first word — a generic first word
+        # ("Turbo" of "Turbo Clean") matches unrelated machines. Single-word brands
+        # pass through as-is.
+        b = brand.strip()
+        parts.append(f'"{b}"' if " " in b else b)
     # add meaningful slug words
     toks = [w.strip() for w in re.split(r"\s+", slug) if w.strip()]
     for i, w in enumerate(toks):

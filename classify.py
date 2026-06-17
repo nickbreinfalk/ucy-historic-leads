@@ -52,7 +52,13 @@ HAIKU_SYSTEM = (
     "machine type — err toward precision, but cover the real variants.\n"
     "- noise_terms: tokens in THIS title that are model numbers, years, dimensions, or fragments to ignore.\n\n"
     "NEVER put generic words in synonyms ('machine', 'used', 'automatic', 'cnc', 'line', 'system', 'new') "
-    "or the model number/year/dimensions — those pull in unrelated machines."
+    "or the model number/year/dimensions — those pull in unrelated machines.\n"
+    "CRITICAL — each synonym must denote the SAME SPECIFIC machine, at the same level of specificity. "
+    "Do NOT include a broader PARENT category or a bare operation word: for a 'thread rolling machine' "
+    "never add 'rolling machine' or 'rolling' (that's all rolling machines); for an 'SMT stencil printer' "
+    "never add 'screen printer' (that's textile/graphic printing); for a 'parts cleaning machine' never add "
+    "'cleaning system' (that's CIP/mud/ultrasonic cleaning). If a term would match a DIFFERENT kind of "
+    "machine or a whole family, leave it out."
 )
 
 def _conn():
@@ -65,16 +71,21 @@ def _load_patterns(conn):
     return [{"category": r[0], "brand_hint": r[1], "synonyms": r[2] or [], "noise_terms": r[3] or []}
             for r in rows]
 
-def _overlap_synonyms(text, patterns):
-    """Union of synonyms from EVERY learned pattern that shares a term with `text`.
-    Lets a search use all accumulated knowledge for a type even if it's split across
-    rows (e.g. a seed 'CMM / measuring' + a Haiku 'coordinate measuring machine')."""
+def _overlap_synonyms(text, patterns, category=""):
+    """Union of synonyms from learned patterns that share a term with `text` AND
+    are the SAME machine family as `category`. The family gate is critical: without
+    it, a single shared token (e.g. 'mill' inside 'thread mill') drags an entire
+    UNRELATED pattern's synonyms in — that's how a thread-rolling machine inherited
+    'milling machine'/'fräs' and matched 40k milling machines. Borrow only within
+    the family; the bare token must also be discriminating (>=5 chars or a phrase)."""
     low = text.lower()
     out = []
     for p in patterns:
+        if category and not _same_family(p["category"], category):
+            continue
         for s in p["synonyms"]:
             s2 = (s or "").lower().strip()
-            if len(s2) < 3:
+            if len(s2) < 5 and " " not in s2:   # ignore short bare tokens as the bridge
                 continue
             hit = (s2 in low) if " " in s2 else re.search(r"\b" + re.escape(s2) + r"\b", low)
             if hit:
@@ -171,11 +182,26 @@ def _store(conn, category, brand, synonyms, noise):
 
 # short tokens that ARE valid machine terms (so we don't strip them as model codes)
 INDUSTRIAL_OK = {"cmm", "edm", "vmc", "hmc", "cnc", "smt", "ems", "saw", "mig", "tig", "co2", "plc"}
+# bare single tokens that name a broad OPERATION/FAMILY, not a specific machine —
+# as a standalone full-text term each matches thousands of unrelated machines
+# (e.g. 'rolling' hits plate/ring/cold/thread rolling). Allowed only inside a
+# multi-word phrase ('thread rolling', 'milling machine'), never alone.
+OVER_BROAD_BARE = {"mill", "milling", "rolling", "screen", "cleaning", "grinding",
+                   "cutting", "forming", "washing", "machining", "drilling",
+                   "welding", "casting", "molding", "moulding", "printing",
+                   "bending", "turning", "boring", "sanding", "pressing",
+                   "coating", "packaging", "filling", "mixing", "cleaner", "washer"}
+# broad PHRASES that span machine families/industries — drop even though multi-word
+# (the more-specific synonyms carry the real match; these only add pollution)
+OVER_BROAD_PHRASE = {"rolling machine", "cleaning system", "screen printer",
+                     "cleaning machine", "screen printing", "industrial cleaner",
+                     "industrial cleaning machine", "printing machine", "washing machine"}
 
 def _clean_synonyms(synonyms, noise=()):
     """Strip anything that would pollute the search: generic nouns, the listing's
-    own noise terms (model #/year/dimensions per Haiku), and bare short model codes
-    like 'zip' (a 3-char single token that isn't a known industrial acronym)."""
+    own noise terms (model #/year/dimensions per Haiku), bare short model codes
+    like 'zip', and bare broad-operation tokens (OVER_BROAD_BARE) that match
+    across whole machine families."""
     noiseset = {(n or "").lower().strip() for n in (noise or [])}
     out = []
     for s in synonyms:
@@ -185,24 +211,26 @@ def _clean_synonyms(synonyms, noise=()):
             continue
         if " " not in s and len(low) <= 3 and low not in INDUSTRIAL_OK:
             continue
+        if " " not in s and low in OVER_BROAD_BARE:   # bare broad-operation token
+            continue
+        if low in OVER_BROAD_PHRASE:                   # broad cross-family phrase
+            continue
         out.append(s)
     return out
 
 def _terms_from_synonyms(brand, synonyms):
-    """OR full-text query from discriminating synonyms + the brand as a PHRASE."""
+    """OR full-text query from discriminating TYPE synonyms only.
+
+    The brand is deliberately NOT added here: brand matching is the dedicated
+    `brand` column's job (exact + prefix, tier 4/5). Injecting the brand into the
+    type terms is what floods tier-3 — a generic-word brand ("Smart" of Smart NGP,
+    "Turbo" of Turbo Clean) matches every title containing that common word.
+    Distinctive brands (EKRA, AmbaFlex) already arrive via Haiku's synonyms."""
     parts = []
     for s in synonyms:
         s = s.strip()
         if s and s.lower() not in GENERIC_NOUNS:
             parts.append(f'"{s}"' if " " in s else s)
-    if brand:
-        # Use the FULL brand as a phrase, NEVER the bare first word. A generic
-        # first word ("Turbo" of "Turbo Clean", "Smart" of "Smart NGP") matches
-        # unrelated machines ("Mazak Super Turbo" laser cutter) and floods the
-        # type list. A multi-word phrase is discriminating; real brand matching
-        # is already the dedicated `brand` column's job (exact + prefix).
-        b = brand.strip()
-        parts.append(f'"{b}"' if " " in b else b)
     seen, out = set(), []
     for p in parts:
         if p.lower() not in seen:
@@ -243,7 +271,7 @@ def classify(title, slug="", url=""):
                 hb = prof.get("brand") or brand
                 _store(conn, category, hb, stored, noise)
                 # search with EVERYTHING known about this type (all overlapping rows) + fresh Haiku
-                query_syn = _clean_synonyms(_merge(_overlap_synonyms(syn_text, patterns), prof["synonyms"]), noise)
+                query_syn = _clean_synonyms(_merge(_overlap_synonyms(syn_text, patterns, category), prof["synonyms"]), noise)
                 return {"brand": hb, "category": category,
                         "terms": _terms_from_synonyms(hb, query_syn),
                         "used_haiku": True, "recognized": f"AI-classified: {category}"}
