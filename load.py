@@ -28,7 +28,6 @@ create table leads (
     city          text,
     listing_title text not null,
     brand         text,
-    category      text,
     created_date  date
 );
 """
@@ -41,7 +40,6 @@ alter table leads add column title_fts tsvector
     generated always as (to_tsvector('simple', coalesce(listing_title,''))) stored;
 
 create index leads_brand_key_idx on leads (brand_key);
-create index leads_category_idx  on leads (category);
 create index leads_email_idx     on leads (email);
 create index leads_title_trgm_idx on leads using gin (listing_title gin_trgm_ops);
 create index leads_title_fts_idx  on leads using gin (title_fts);
@@ -55,7 +53,7 @@ def main():
         conn.execute(DDL)
 
         print("COPY loading clean.csv (this is the slow part)...")
-        cols = "email,company,first_name,last_name,phone,country,city,listing_title,brand,category,created_date"
+        cols = "email,company,first_name,last_name,phone,country,city,listing_title,brand,created_date"
         copy_sql = f"copy leads ({cols}) from stdin with (format csv, header true, null '')"
         with open(CLEAN, "r", encoding="utf-8") as f, conn.cursor() as cur:
             with cur.copy(copy_sql) as cp:

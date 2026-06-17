@@ -6,17 +6,17 @@ Mirrors what the bot does (core.build_reply), printed for the terminal.
 """
 import sys, re
 from listing import parse_listing
-from classify import classify
+from classify import classify_stable
 from match import match, export_csv
 
 def run(url, out=None):
     info = parse_listing(url)
-    prof = classify(info["title"], url=url)
+    prof = classify_stable(info["title"], url=url)
     print(f"machine   : {info['title']}")
     print(f"brand     : {prof['brand']}")
     print(f"type      : {prof['category']}")
-    print(f"terms     : {prof['terms']}")
-    print(f"classifier: {'HAIKU (AI-optimized terms)' if prof['used_haiku'] else prof['recognized']}\n")
+    print(f"confidence: {prof.get('confidence')}")
+    print(f"classifier: {prof.get('recognized')}\n")
     rows = match(prof["brand"], mtype=prof["category"])
     brand = sum(1 for r in rows if r["tier"] >= 4)
     typ = sum(1 for r in rows if r["tier"] == 3)

@@ -292,60 +292,6 @@ def classify_stable(title, slug="", url="", votes=3):
             "used_haiku": True, "recognized": f"AI ({top_n}/{votes} agree): {category}"}
 
 def classify(title, slug="", url=""):
-    """Return a profile dict: brand, category, terms, used_haiku, recognized."""
-    if not slug and url:
-        m = re.search(r"/listings/\d+-(.+?)/?$", url)
-        slug = m.group(1).replace("-", " ") if m else ""
-    brand = extract_brand(title) or extract_brand(slug)
-    text = f"{title} {slug}"
-    try:
-        with _conn() as conn:
-            patterns = _load_patterns(conn)
-            # Quality-first: always ask Haiku for the best brand + terms for THIS exact
-            # machine (~$0.003 a call). Then COMPOUND it into what we already know about
-            # this machine type, and search with the accumulated union — the system gets
-            # smarter with every machine posted.
-            prof = _haiku_classify(title)
-            if prof:
-                syn_text = " ".join(prof["synonyms"])
-                # cluster onto an existing learned type by synonym overlap (so phrasing
-                # drift in the category label doesn't fragment the knowledge)
-                # USE THE FRESH classification — never override it with a cached
-                # category. The old clustering remapped correct fresh types onto
-                # stale same-family ones (flatbed laser -> "tube laser", cnc router
-                # -> "machining center", tunnel boring -> "horizontal boring"),
-                # which blasted the wrong audience. The v2 matcher canonicalises by
-                # core-tokens/families and no longer uses these cached synonyms, so
-                # the override has no upside — only harm.
-                category = prof["category"]
-                existing, _ = _recognize(syn_text, patterns)
-                if existing and not _same_family(existing["category"], category):
-                    existing = None
-                noise = prof.get("noise_terms", [])
-                # accumulate Haiku's terms into the canonical row (the cache learns),
-                # sanitized so model fragments never get stored
-                stored = _clean_synonyms(_merge(existing["synonyms"] if existing else [], prof["synonyms"]), noise)
-                hb = prof.get("brand") or brand
-                _store(conn, category, hb, stored, noise)
-                # search with EVERYTHING known about this type (all overlapping rows) + fresh Haiku
-                query_syn = _clean_synonyms(_merge(_overlap_synonyms(syn_text, patterns, category), prof["synonyms"]), noise)
-                # confidence: Haiku's own honest read on whether it KNOWS the type.
-                # Used to route type-mode vs brand-mode in core.build_reply.
-                return {"brand": hb, "category": category,
-                        "terms": _terms_from_synonyms(hb, query_syn),
-                        "confidence": prof.get("confidence", "low"),
-                        "used_haiku": True, "recognized": f"AI-classified: {category}"}
-            # Haiku unavailable -> use the accumulated knowledge from the cache
-            hit, _ = _recognize(text, patterns)
-            if hit:
-                return {"brand": brand, "category": hit["category"],
-                        "terms": _terms_from_synonyms(brand, _clean_synonyms(hit["synonyms"])),
-                        "confidence": "low", "used_haiku": False,
-                        "recognized": f"cache (AI unavailable): {hit['category']}"}
-    except Exception:
-        traceback.print_exc()
-    # fallback: rule-based extraction (Haiku/DB unavailable)
-    cat = rule_extract_category(title)
-    return {"brand": brand, "category": cat, "confidence": "low",
-            "terms": rule_build_terms(title, slug, brand, cat),
-            "used_haiku": False, "recognized": "rules (fallback)"}
+    """Deprecated alias. The self-learning `learned_patterns` design was retired
+    (it corrupted types); everything now uses the deterministic classify_stable."""
+    return classify_stable(title, slug, url)
