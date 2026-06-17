@@ -9,11 +9,14 @@ Tiers (per contact = max over their matching rows):
      discriminating synonym in the title)
 Rows that match neither brand nor type are not returned.
 
-The `machine_type` column (AI-backfilled, brand-free, ~95% coverage) is matched
-by exact equality against the listing's own classified type (`mtype`). This is
-the key recall win for TERSE leads — a row titled just "Haas VF-2" shares no
-type-words with the synonym query, but its machine_type ("vertical machining
-center") still matches. Index-backed (leads_machine_type_idx), so it's cheap.
+The `machine_type` column (AI-backfilled, brand-free, ~99% coverage) is matched
+two ways: (a) exact equality against the listing's own classified type (`mtype`,
+btree leads_machine_type_idx), and (b) full-text of the discriminating synonyms
+against machine_type (GIN leads_machine_type_fts_idx) — drift-tolerant, so a
+query for "fiber laser cutter" still hits a lead typed "fiber laser cutting
+machine". This is the key recall win for TERSE leads — a row titled just
+"Haas VF-2" shares no type-words with the title, but its machine_type
+("vertical machining center") still matches.
 
 relevance = tier*1000 + ts_rank*10 + ln(1+past_requests)
   -> tier dominates; within a tier, more-specific + repeat + recent rise.
@@ -35,6 +38,8 @@ with scored as (
                                     or lower(brand) like lower(%(brand)s) || ' %%' ) ) as brand_match,
            ( ( %(category)s <> '' and category = %(category)s )
              or ( %(mtype)s <> '' and machine_type = %(mtype)s )
+             or ( %(terms)s <> '' and to_tsvector('simple', machine_type)
+                      @@ websearch_to_tsquery('simple', %(terms)s) )
              or ( %(terms)s <> '' and to_tsvector('simple', listing_title)
                       @@ websearch_to_tsquery('simple', %(terms)s) ) ) as type_match,
            case when %(terms)s <> '' then
@@ -46,6 +51,8 @@ with scored as (
                                   or lower(brand) like lower(%(brand)s) || ' %%' ) )
        or ( %(category)s <> '' and category = %(category)s )
        or ( %(mtype)s <> '' and machine_type = %(mtype)s )
+       or ( %(terms)s <> '' and to_tsvector('simple', machine_type)
+                @@ websearch_to_tsquery('simple', %(terms)s) )
        or ( %(terms)s <> '' and to_tsvector('simple', listing_title)
                 @@ websearch_to_tsquery('simple', %(terms)s) )
 ),
