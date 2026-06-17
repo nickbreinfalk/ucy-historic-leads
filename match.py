@@ -118,6 +118,10 @@ BROAD_TYPE_TOKENS = {
     # 'press' alone spans press brake / stamping / hydraulic / baling / filter press —
     # totally different buyers. Needs a qualifier ('press brake', 'filter press') to match.
     "press",
+    # 'screw' spans screw machine (lathe) / screw compressor / screw extruder /
+    # screw press / screw conveyor / screw pump — all different buyers. (Measured:
+    # Tornos Deco "automatic screw machine" was pulling 10k wrong leads on this token.)
+    "screw",
 }
 _THIN = _VAGUE_TYPE | BROAD_TYPE_TOKENS
 
