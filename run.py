@@ -17,7 +17,7 @@ def run(url, out=None):
     print(f"type      : {prof['category']}")
     print(f"terms     : {prof['terms']}")
     print(f"classifier: {'HAIKU (AI-optimized terms)' if prof['used_haiku'] else prof['recognized']}\n")
-    rows = match(prof["brand"], prof["terms"], prof["category"])
+    rows = match(prof["brand"], mtype=prof["category"])
     brand = sum(1 for r in rows if r["tier"] >= 4)
     typ = sum(1 for r in rows if r["tier"] == 3)
     print(f"{len(rows)} leads  |  {brand} inquired-brand  /  {typ} inquired-type\n")

@@ -1,60 +1,109 @@
 """
-Tiered matcher. Given a machine profile (brand + discriminating type-terms +
-optional category), find historic leads, deduped to one contact per email.
+Tiered matcher (v2 — deterministic, machine_type-anchored).
 
-Tiers (per contact = max over their matching rows):
-  5  bought this BRAND and this TYPE        (hottest)
-  4  bought this BRAND (any machine)
-  3  bought this TYPE (machine_type col exact hit, category col, OR a
-     discriminating synonym in the title)
-Rows that match neither brand nor type are not returned.
+Given a posted machine's classified machine_type, find historic leads who
+inquired about the SAME KIND of machine, deduped to one contact per email.
 
-The `machine_type` column (AI-backfilled, brand-free, ~99% coverage) is matched
-two ways: (a) exact equality against the listing's own classified type (`mtype`,
-btree leads_machine_type_idx), and (b) full-text of the discriminating synonyms
-against machine_type (GIN leads_machine_type_fts_idx) — drift-tolerant, so a
-query for "fiber laser cutter" still hits a lead typed "fiber laser cutting
-machine". This is the key recall win for TERSE leads — a row titled just
-"Haas VF-2" shares no type-words with the title, but its machine_type
-("vertical machining center") still matches.
+Type matching is DETERMINISTIC — it does NOT use the per-listing Haiku synonyms
+(those varied call-to-call and dragged in adjacent machines). Instead it builds a
+stable query from the machine_type's CORE tokens: discriminating words with
+generic nouns and modifiers (vertical/horizontal/cnc/automatic...) removed, each
+expanded by a small curated synonym set (cleaning<->washer, lathe<->turning...),
+then AND-ed together. Requiring ALL core tokens means 'thread rolling' never
+matches plain 'milling' or 'plate rolling'. It runs against the AI-backfilled
+machine_type column (primary, ~99% coverage) and the listing_title (secondary,
+for the few still-untyped leads). Same machine in -> same list out.
 
-relevance = tier*1000 + ts_rank*10 + ln(1+past_requests)
-  -> tier dominates; within a tier, more-specific + repeat + recent rise.
-
-Because the type-terms come from the self-learning classifier, they are
-discriminating (no generic-noun noise), so tier 3 is high precision — there is
-no separate junk/keyword tier to exclude. No row cap: every match, best-first.
+Tiers (per contact = max over their rows):
+  5  inquired about this BRAND and this TYPE
+  4  inquired about this BRAND
+  3  inquired about this TYPE
+relevance = tier*1000 + ts_rank*10 + ln(1 + past_requests)  -> tier dominates.
+No row cap: every match, best-first.
 """
 import os, re, csv, argparse, psycopg
 from dotenv import load_dotenv
+from listing import strip_location
 
 load_dotenv()
+
+# dropped from a machine_type before building the type query (carry no type meaning)
+TYPE_GENERIC = {"machine", "machines", "system", "systems", "unit", "units", "line",
+                "lines", "equipment", "plant", "complete", "used", "new", "sale",
+                "for", "the", "with", "and", "set"}
+# modifiers: narrow a type but aren't the type itself -> drop so sub-variants still match
+TYPE_MODIFIER = {"vertical", "horizontal", "cnc", "automatic", "automated", "universal",
+                 "manual", "semi", "mobile", "portable", "industrial", "heavy",
+                 "compact", "double", "single", "twin", "mini", "micro", "large",
+                 "small", "type", "series", "fully", "axis", "high", "speed",
+                 "precision", "standard", "electric", "hydraulic"}
+# curated SYMMETRIC synonyms so word-variants of the SAME machine still match
+TYPE_SYN = {
+    "cleaning": ["washer", "washing", "cleaner", "wash"],
+    "washer": ["cleaning", "washing", "cleaner", "wash"],
+    "washing": ["cleaning", "washer", "cleaner", "wash"],
+    "cleaner": ["cleaning", "washer", "washing", "wash"],
+    "wash": ["cleaning", "washer", "washing", "cleaner"],
+    "lathe": ["turning"], "turning": ["lathe"],
+    "milling": ["mill"], "mill": ["milling"],
+    "grinding": ["grinder"], "grinder": ["grinding"],
+    "printing": ["printer"], "printer": ["printing"],
+    "molding": ["moulding"], "moulding": ["molding"],
+    "welding": ["welder"], "welder": ["welding"],
+    "bending": ["bender"], "bender": ["bending"],
+    "forming": ["former"], "former": ["forming"],
+    "extruder": ["extrusion"], "extrusion": ["extruder"],
+    "sawing": ["saw"], "saw": ["sawing"],
+    "conveyor": ["conveying"], "conveying": ["conveyor"],
+    # aggregate-processing materials are interchangeable (gravel/sand/aggregate
+    # washing & screening plants are the same machine for a buyer)
+    "gravel": ["sand", "aggregate", "quarry"], "sand": ["gravel", "aggregate", "quarry"],
+    "aggregate": ["gravel", "sand", "quarry"], "quarry": ["gravel", "sand", "aggregate"],
+    # SMT / PCB solder-paste printing context (stencil printer == solder paste
+    # printer == smd printer; 'smt' is context, not a distinct machine)
+    "smt": ["smd", "stencil", "solder"], "smd": ["smt", "stencil", "solder"],
+    "stencil": ["smt", "smd", "solder"], "solder": ["smt", "smd", "stencil"],
+}
+
+def build_type_query(mtype):
+    """Deterministic to_tsquery string from a machine_type's core tokens, e.g.
+    'parts cleaning machine' -> '(parts) & (cleaning | washer | washing | cleaner | wash)'.
+    Returns '' if the type reduces to nothing (all generic/modifier)."""
+    toks, seen = [], set()
+    for w in re.findall(r"[a-z0-9]+", (mtype or "").lower()):
+        if len(w) <= 2 or w in TYPE_GENERIC or w in TYPE_MODIFIER or w in seen:
+            continue
+        seen.add(w); toks.append(w)
+    if not toks:
+        return ""
+    groups = []
+    for t in toks:
+        alts, s2 = [], set()
+        for a in [t] + TYPE_SYN.get(t, []):
+            if a not in s2:
+                s2.add(a); alts.append(a)
+        groups.append("(" + " | ".join(alts) + ")")
+    return " & ".join(groups)
 
 SCORED_CTE = """
 with scored as (
     select email, company, first_name, last_name, phone, country, city,
-           listing_title, category, created_date,
+           listing_title, created_date,
            ( %(brand)s <> '' and ( lower(brand) = lower(%(brand)s)
                                     or lower(brand) like lower(%(brand)s) || ' %%' ) ) as brand_match,
-           ( ( %(category)s <> '' and category = %(category)s )
-             or ( %(mtype)s <> '' and machine_type = %(mtype)s )
-             or ( %(terms)s <> '' and to_tsvector('simple', machine_type)
-                      @@ websearch_to_tsquery('simple', %(terms)s) )
-             or ( %(terms)s <> '' and to_tsvector('simple', listing_title)
-                      @@ websearch_to_tsquery('simple', %(terms)s) ) ) as type_match,
-           case when %(terms)s <> '' then
-                  ts_rank(to_tsvector('simple', listing_title),
-                          websearch_to_tsquery('simple', %(terms)s))
+           ( ( %(mtype)s <> '' and machine_type = %(mtype)s )
+             or ( %(typeq)s <> '' and to_tsvector('simple', machine_type) @@ to_tsquery('simple', %(typeq)s) )
+             or ( %(typeq)s <> '' and to_tsvector('simple', listing_title) @@ to_tsquery('simple', %(typeq)s) )
+           ) as type_match,
+           case when %(typeq)s <> '' then
+                  ts_rank(to_tsvector('simple', machine_type), to_tsquery('simple', %(typeq)s))
                 else 0 end as rank
     from leads
     where ( %(brand)s <> '' and ( lower(brand) = lower(%(brand)s)
                                   or lower(brand) like lower(%(brand)s) || ' %%' ) )
-       or ( %(category)s <> '' and category = %(category)s )
        or ( %(mtype)s <> '' and machine_type = %(mtype)s )
-       or ( %(terms)s <> '' and to_tsvector('simple', machine_type)
-                @@ websearch_to_tsquery('simple', %(terms)s) )
-       or ( %(terms)s <> '' and to_tsvector('simple', listing_title)
-                @@ websearch_to_tsquery('simple', %(terms)s) )
+       or ( %(typeq)s <> '' and to_tsvector('simple', machine_type) @@ to_tsquery('simple', %(typeq)s) )
+       or ( %(typeq)s <> '' and to_tsvector('simple', listing_title) @@ to_tsquery('simple', %(typeq)s) )
 ),
 tiered as (
     select *,
@@ -93,22 +142,21 @@ where t.tier > 0
 group by t.tier order by t.tier desc
 """
 
-def _params(brand, terms, category, mtype="", min_tier=3):
+def _params(brand, mtype, min_tier=3):
     brand = re.sub(r"([%_\\])", r"\\\1", brand or "")  # escape LIKE wildcards
-    return {"brand": brand, "terms": terms or "", "category": category or "",
-            "mtype": (mtype or "").lower().strip(),  # leads.machine_type is lowercase
-            "min_tier": min_tier}
+    mtype = (mtype or "").lower().strip()              # leads.machine_type is lowercase
+    return {"brand": brand, "mtype": mtype, "typeq": build_type_query(mtype), "min_tier": min_tier}
 
-def match(brand="", terms="", category="", mtype="", limit=None, min_tier=3):
-    p = _params(brand, terms, category, mtype, min_tier)
+def match(brand="", mtype="", limit=None, min_tier=3):
+    p = _params(brand, mtype, min_tier)
     sql = MATCH_SQL + (f"\nlimit {int(limit)}" if limit else "")
     with psycopg.connect(os.environ["SUPABASE_DB_URL"], autocommit=True) as conn:
         cur = conn.execute(sql, p)
         cols = [d.name for d in cur.description]
         return [dict(zip(cols, row)) for row in cur.fetchall()]
 
-def count_by_tier(brand="", terms="", category="", mtype=""):
-    p = _params(brand, terms, category, mtype)
+def count_by_tier(brand="", mtype=""):
+    p = _params(brand, mtype)
     with psycopg.connect(os.environ["SUPABASE_DB_URL"], autocommit=True) as conn:
         return {int(t): int(n) for t, n in conn.execute(COUNT_SQL, p).fetchall()}
 
@@ -123,7 +171,6 @@ def export_csv(rows, path):
         print("no matches"); return
     fields = ["company", "first_name", "last_name", "email", "phone", "country",
               "city", "tier", "past_requests", "last_request", "relevance", "example_requests"]
-    from listing import strip_location
     with open(path, "w", encoding="utf-8", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
         w.writeheader()
@@ -136,15 +183,14 @@ def export_csv(rows, path):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--brand", default="")
-    ap.add_argument("--terms", default="")
-    ap.add_argument("--category", default="")
-    ap.add_argument("--mtype", default="")
+    ap.add_argument("--mtype", default="", help="machine_type (e.g. 'press brake')")
     ap.add_argument("--out", default="")
     a = ap.parse_args()
-    counts = count_by_tier(a.brand, a.terms, a.category, a.mtype)
+    print("type query:", build_type_query(a.mtype) or "(none)")
+    counts = count_by_tier(a.brand, a.mtype)
     total, brand, typ = tier_summary(counts)
     print(f"pool: {total} matched  |  {brand} brand  /  {typ} type")
-    rows = match(a.brand, a.terms, a.category, a.mtype)
+    rows = match(a.brand, a.mtype)
     for r in rows[:15]:
         print(f"  T{r['tier']} [{r['relevance']}] {r['past_requests']}x  "
               f"{(r['company'] or '')[:26]:26}  {r['email']:34}  {r['country']}")
