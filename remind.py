@@ -1,7 +1,7 @@
 """
-Weekly reminder: posts to the channel and @-mentions the owner to upload the
-week's leads from the Machinio system. Fired by .github/workflows/weekly_reminder.yml
-on a Friday-afternoon cron.
+Monthly reminder: posts to the channel and @-mentions the owner to upload the
+latest leads from the Machinio system. Fired by .github/workflows/monthly_reminder.yml
+on the 1st of each month.
 """
 import os
 from dotenv import load_dotenv
@@ -13,8 +13,8 @@ CHANNEL = os.environ["SLACK_CHANNEL_ID"]
 USER = os.environ["SLACK_USER_ID"]
 
 MESSAGE = (
-    f":calendar: <@{USER}> — *Friday lead drop!* :inbox_tray:\n"
-    f"Time to export this week's leads from the *Machinio system* and upload them, "
+    f":calendar: <@{USER}> — *Monthly lead drop!* :inbox_tray:\n"
+    f"Time to export the latest leads from the *Machinio system* and upload them, "
     f"so the historic-leads database stays current and the matcher keeps surfacing fresh leads."
 )
 

@@ -1,14 +1,15 @@
-name: weekly-leads-reminder
+name: monthly-leads-reminder
 
 on:
   schedule:
-    # Friday 14:00 UTC = ~afternoon in Valencia (16:00 CEST summer / 15:00 CET winter).
-    # GitHub cron can run a few minutes late — fine for a reminder.
-    - cron: "0 14 * * 5"
+    # 1st of every month, 14:00 UTC = ~afternoon in Valencia (16:00 CEST summer / 15:00 CET winter).
+    # GitHub cron can run a few minutes late — fine for a reminder. (Was weekly Friday; the CSV
+    # export only needs doing once a month.)
+    - cron: "0 14 1 * *"
   workflow_dispatch: {}    # lets you (or me) fire a test reminder on demand
 
 concurrency:
-  group: weekly-leads-reminder
+  group: monthly-leads-reminder
   cancel-in-progress: false   # a manual dispatch near the cron won't double-post
 
 jobs:
