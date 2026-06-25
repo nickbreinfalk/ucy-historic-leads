@@ -7,22 +7,49 @@ brand/category heuristics from normalize.py and expands the detected category
 into full-text search terms.
 """
 import re, sys, requests
+from urllib.parse import urlsplit
 from bs4 import BeautifulSoup
 from normalize import extract_brand, extract_category, CATEGORY_RULES
 
 CAT_KEYWORDS = dict(CATEGORY_RULES)  # label -> [keywords]
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; UCYLeadBot/1.0)"}
+# Hosts we trust to follow a redirect to. Machinio/ucymachines very commonly
+# 301s a short link (id only, or a stale slug) to the canonical id+slug URL on
+# the SAME host — refusing those was dropping the real title and abstaining.
+ALLOWED_HOSTS = {"ucymachines.com", "www.ucymachines.com"}
+
+def _get_same_host(url, max_hops=5):
+    """GET `url`, manually following redirects ONLY while they stay on an allowed
+    host (SSRF-safe: an off-host Location is never fetched). Returns the final
+    Response (200 or the last hop), or None on error. Also returns the final URL
+    so the caller can recover the canonical slug."""
+    seen = set()
+    cur = url
+    for _ in range(max_hops):
+        r = requests.get(cur, headers=HEADERS, timeout=20, allow_redirects=False)
+        if r.status_code not in (301, 302, 303, 307, 308):
+            return r, cur
+        loc = r.headers.get("location") or ""
+        if not loc:
+            return r, cur
+        # resolve relative redirects against the current URL
+        nxt = requests.compat.urljoin(cur, loc)
+        host = (urlsplit(nxt).hostname or "").lower()
+        if host not in ALLOWED_HOSTS or nxt in seen:
+            return r, cur            # off-host or loop -> stop, don't chase
+        seen.add(nxt); cur = nxt
+    return None, cur
 
 def fetch_title(url):
-    """Best machine title we can get from the page; fall back to the URL slug."""
+    """Best machine title we can get from the page; fall back to the URL slug.
+    Same-host redirects ARE followed (ucymachines canonicalises id-only / stale
+    links), so the real og:title is recovered instead of abstaining on a bare slug."""
     title = ""
+    final = url
     try:
-        # SSRF-safe: don't chase redirects to arbitrary hosts. If the listing
-        # page redirects, we just fall back to the URL slug (which carries the
-        # brand/model anyway).
-        r = requests.get(url, headers=HEADERS, timeout=20, allow_redirects=False)
-        soup = BeautifulSoup(r.text if r.status_code == 200 else "", "html.parser")
+        r, final = _get_same_host(url)
+        soup = BeautifulSoup(r.text if (r and r.status_code == 200) else "", "html.parser")
         og = soup.find("meta", property="og:title")
         if og and og.get("content"):
             title = og["content"].strip()
@@ -32,8 +59,9 @@ def fetch_title(url):
             title = soup.title.get_text(" ", strip=True)
     except Exception as e:
         print(f"  (page fetch failed: {e}; using slug)", file=sys.stderr)
-    # always fold in the slug words — they're clean and reliable
-    m = re.search(r"/listings/\d+-(.+?)/?$", url)
+    # always fold in the slug words — they're clean and reliable. Prefer the
+    # FINAL (canonical) URL's slug: the original may be id-only or a stale stub.
+    m = re.search(r"/listings/\d+-(.+?)/?$", final) or re.search(r"/listings/\d+-(.+?)/?$", url)
     slug = m.group(1).replace("-", " ") if m else ""
     return title, slug
 
